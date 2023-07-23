@@ -1,4 +1,4 @@
-# **BazUpgrade - Automatic Software Upgrader **
+# ** BazUpgrade - Automatic Software Upgrader **
 
 ![Version](https://img.shields.io/github/v/release/karusb/BazUpgrade?include_prereleases&style=flat)
 ![Build Status](https://github.com/karusb/BazUpgrade/actions/workflows/build.yml/badge.svg)
@@ -7,7 +7,7 @@
 
 # !!! UNDER DEVELOPMENT !!! 
 
-BazUpgrade is an auto upgrader software which allows any software to be upgraded automatically with correct configuration.
+BazUpgrade is an upgrader software that allows any software to be upgraded automatically with the correct configuration.
 - Currently Supported Vendors
     - GitHub
 
