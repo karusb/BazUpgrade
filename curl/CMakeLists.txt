@@ -1,4 +1,8 @@
 FIND_PACKAGE(CURL)
+
+add_library(bazupgrade.curl STATIC)
+set_target_properties(bazupgrade.curl PROPERTIES LINKER_LANGUAGE CXX)
+
 IF(CURL_FOUND)
   INCLUDE_DIRECTORIES(${CURL_INCLUDE_DIR})
   SET(requiredlibs ${requiredlibs} ${CURL_LIBRARIES} )
@@ -70,16 +74,17 @@ ${CMAKE_CURRENT_BINARY_DIR}/libcurl/libcurl_install/lib/${CURL_DEBUG_TARGET_NAME
     target_link_libraries(curl INTERFACE optimized
 ${CMAKE_CURRENT_BINARY_DIR}/libcurl/libcurl_install/lib/${CURL_RELEASE_TARGET_NAME}${CMAKE_STATIC_LIBRARY_SUFFIX})
 
+add_dependencies(bazupgrade.curl libcurl)
+
 ENDIF(CURL_FOUND)
 
-add_library(bazupgrade.curl STATIC)
-set_target_properties(bazupgrade.curl PROPERTIES LINKER_LANGUAGE CXX)
 target_include_directories(bazupgrade.curl PUBLIC ${BazUpgradePath} ${CURL_INCLUDE_DIRS} curl)
 
 target_link_libraries(bazupgrade.curl PUBLIC
     bazupgrade.interfaces
     curl
 )
+
 target_sources(bazupgrade.curl PRIVATE
     CurlContext.cpp
     CurlContext.hpp

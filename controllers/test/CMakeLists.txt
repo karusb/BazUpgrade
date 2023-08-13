@@ -12,7 +12,7 @@ add_executable(
 )
 
 target_include_directories(bazupgrade.controllers_test PUBLIC ${BazUpgradePath} ${googletest_SOURCE_DIR})
-
+set_target_properties(bazupgrade.controllers_test PROPERTIES LINKER_LANGUAGE CXX CXX_STANDARD 17)
 target_link_libraries(
   bazupgrade.controllers_test
   bazupgrade.controllers

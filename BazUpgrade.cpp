@@ -1,5 +1,6 @@
 ﻿#include "instantiations/BazUpgradeGitHub.hpp"
 #include "instantiations/TracingBazUpgradeGitHub.hpp"
+#include "instantiations/BazUpgradeGitHub.hpp"
 #include "BazPO.hpp"
 
 using namespace std;
@@ -56,7 +57,7 @@ int main(int argc, const char* argv[])
     // - Zip file cleanup?
     // - Self updater? (pass in arguments to the new release once downloaded)
 
-    if (tracing)
+    if (!tracing)
     {
         BazUpgradeGitHub upgrader(user, repo, currentVersion, assetIdentifier, alphaReleases, downloadTarBall, downloadZipBall, unzipFiles, unzipPath, launchPath);
         return upgrader.Upgrade();

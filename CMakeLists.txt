@@ -12,6 +12,12 @@ set (CMAKE_CXX_EXTENSIONS OFF)
 SET(requiredlibs)
 SET(DOWNLOAD_EXTRACT_TIMESTAMP ON)
 
+add_executable (BazUpgrade
+ "BazUpgrade.cpp" 
+)
+target_include_directories(BazUpgrade PUBLIC)
+set_property(TARGET BazUpgrade PROPERTY CXX_STANDARD 17)
+
 include(ExternalProject)
 include(FetchContent)
 FetchContent_Declare(
@@ -50,15 +56,12 @@ add_subdirectory(controllers)
 add_subdirectory(vendors)
 add_subdirectory(tracing)
 add_subdirectory(instantiations)
-add_executable (BazUpgrade
- "BazUpgrade.cpp" 
-)
 
-target_include_directories(BazUpgrade PRIVATE)
-set_property(TARGET BazUpgrade PROPERTY CXX_STANDARD 17)
+add_dependencies(BazUpgrade bazupgrade.curl)
 target_link_libraries(
-  BazUpgrade
+  BazUpgrade PUBLIC
   BazPO
+  bazupgrade.curl
   bazupgrade.instantiations
   bazupgrade.instantiations_tracing
 )

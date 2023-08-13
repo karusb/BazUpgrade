@@ -5,6 +5,7 @@
 #include "interfaces/mocks/ResponseParserMock.hpp"
 #include "interfaces/mocks/ReleaseSelectorMock.hpp"
 #include <cmath>
+#include <string>
 
 
 class DownloaderSelectiveTest
@@ -44,8 +45,8 @@ public:
     void ExpectSelectReleaseAndAsset(std::optional<Release> release, std::optional<Asset> asset)
     {
         EXPECT_CALL(parser, ParseReleases(testing::_, testing::_));
-        EXPECT_CALL(releaseSelector, SelectEligibleRelease(currentVersion, testing::_)).WillOnce(testing::Return(release));
-        EXPECT_CALL(assetSelector, SelectAsset(assetIdentifier, testing::_)).WillOnce(testing::Return(asset));
+        EXPECT_CALL(releaseSelector, SelectEligibleRelease(std::string_view(currentVersion), testing::_)).WillOnce(testing::Return(release));
+        EXPECT_CALL(assetSelector, SelectAsset(std::string_view(assetIdentifier), testing::_)).WillOnce(testing::Return(asset));
     }
 
     template <typename Arg>
