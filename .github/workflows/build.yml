@@ -20,9 +20,7 @@ jobs:
         uses: SonarSource/sonarcloud-github-c-cpp@v1
       - name: Run build-wrapper
         run: |
-          sudo apt-get update && sudo apt-get install -y curl
-          cmake --preset=Coverage . -B build
-          build-wrapper-linux-x86-64 --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} cmake --build build
+          build-wrapper-linux-x86-64 --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} cmake --preset=Coverage . -B build --build build
       - name: Tests
         run: | 
           cd build && ctest
