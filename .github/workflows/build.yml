@@ -21,6 +21,7 @@ jobs:
       - name: Run build-wrapper
         run: |
           cmake --preset=Coverage . -B build
+          cmake --build build --target bazupgrade.curl
           build-wrapper-linux-x86-64 --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} cmake --build build
       - name: Tests
         run: | 
