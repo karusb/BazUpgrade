@@ -20,7 +20,6 @@ jobs:
         uses: SonarSource/sonarcloud-github-c-cpp@v1
       - name: Run build-wrapper
         run: |
-          apt-get update 
           apt-get install -y openssl
           cmake --preset=Coverage . -B build
           cmake --build build --target bazupgrade.curl
