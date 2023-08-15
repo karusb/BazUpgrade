@@ -21,7 +21,7 @@ jobs:
       - name: Run build-wrapper
         run: |
           sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
-          cmake --preset=Coverage . -B build
+          cmake --preset=Coverage -S . -B build
           build-wrapper-linux-x86-64 --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} cmake --build build
       - name: Tests
         run: | 
