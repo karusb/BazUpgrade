@@ -63,7 +63,7 @@
         "variant": "cpp"
     },
     "gcovViewer.buildDirectories": [
-        "/workspaces/AutoUpgrade/out/build"
+        "/workspaces/BazUpgrade/out/build"
     ],
     "gcovViewer.highlightMissedLines": true
 }
