@@ -25,13 +25,11 @@ jobs:
           build-wrapper-linux-x86-64 --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} cmake --build build
       - name: Tests
         run: | 
-          cd build && ctest && cd -
+          ctest --test-dir build
       - name: Generate code coverage report
         uses: threeal/gcovr-action@latest
         with:
           gcovExecutable: gcov
-          excludes: |
-            build/_deps/*
       - name: Run sonar-scanner
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
