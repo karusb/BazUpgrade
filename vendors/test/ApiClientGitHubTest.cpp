@@ -78,3 +78,19 @@ TEST_F(ApiClientGitHubTest, DownloadAsset)
     EXPECT_CALL(httpClient, Download(asset.url, testing::_)).WillOnce(testing::Return(false));
     EXPECT_FALSE(apiClient.DownloadAsset(asset));
 }
+
+TEST_F(ApiClientGitHubTest, http_layer_failure_propagated)
+{
+    EXPECT_CALL(httpClient, Get(testing::_, testing::_)).WillOnce(testing::Return(false));
+    EXPECT_FALSE(apiClient.GetRelease(response, "12345"));
+    
+    EXPECT_CALL(httpClient, Get(testing::_, testing::_)).WillOnce(testing::Return(false));
+    EXPECT_FALSE(apiClient.GetLatestRelease(response));
+
+    EXPECT_CALL(httpClient, Get(testing::_, testing::_)).WillOnce(testing::Return(false));
+    EXPECT_FALSE(apiClient.GetReleases(response));
+    
+    Asset asset = { "https://test.com/testfile.zip", "testfile.zip" };
+    EXPECT_CALL(httpClient, Download(testing::_, testing::_)).WillOnce(testing::Return(false));
+    EXPECT_FALSE(apiClient.DownloadAsset(asset));
+}
