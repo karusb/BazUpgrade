@@ -2,6 +2,7 @@
 #include "instantiations/TracingBazUpgradeGitHub.hpp"
 #include "instantiations/BazUpgradeGitHub.hpp"
 #include "BazPO.hpp"
+#include <string>
 
 using namespace std;
 using namespace BazPO;
@@ -44,9 +45,9 @@ int main(int argc, const char* argv[])
     po.flag("-t", [&tracing](const Option& option) { tracing = option.exists(); },
         "Enable tracing", "--tracing");
     po.option("-uz", [&unzipFiles, &unzipPath](const Option& option) { unzipFiles = option.exists(); unzipPath = option.valueAs<string>();},
-        "Unzips all downloaded files to the provided path", "--unzip", ".").withMaxValueCount(1);
+        "--unzip", "Unzips all downloaded files to the provided path", ".").withMaxValueCount(1);
     po.option("-l", [&launchPath](const Option& option) { launchPath = option.valueAs<string>();},
-        "Launches the provided executable at path after download & extract", "--launch").withMaxValueCount(1);
+        "--launch", "Launches the provided executable at path after download & extract").withMaxValueCount(1);
     po.parse();
 
 //////////// TODO:
