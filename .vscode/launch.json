@@ -8,7 +8,7 @@
             "name": "C++ Launch",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/out/build/linux-debug/AutoUpgrade",
+            "program": "${workspaceFolder}/out/build/linux-debug/BazUpgrade",
             "args": ["-r", "karusb/BazPO"],
             "environment": [{ "name": "config", "value": "Debug" }],
             "cwd": "${workspaceFolder}"
@@ -17,7 +17,7 @@
             "name": "C++ Launch (Windows)",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/out/build/x64-debug/AutoUpgrade.exe",
+            "program": "${workspaceFolder}/out/build/x64-debug/BazUpgrade.exe",
             "args": ["-r", "karusb/BazPO"],
             "environment": [{ "name": "config", "value": "Debug" }],
             "cwd": "${workspaceFolder}"
