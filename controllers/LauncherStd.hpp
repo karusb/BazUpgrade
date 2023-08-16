@@ -7,7 +7,6 @@ class LauncherStd
 {
 public:
     LauncherStd() = default;
-    ~LauncherStd() = default;
 
     bool Launch(const std::string& launchPath) override;
 };

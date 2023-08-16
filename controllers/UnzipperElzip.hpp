@@ -8,7 +8,6 @@ class UnzipperElzip
 {
 public:
     UnzipperElzip() = default;
-    ~UnzipperElzip() = default;
 
     bool UnzipAll(const std::string& zipPath, const std::string& targetPath) override;
 };

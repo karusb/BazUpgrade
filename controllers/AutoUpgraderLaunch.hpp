@@ -8,7 +8,6 @@ class AutoUpgraderLaunch
 {
 public:
     AutoUpgraderLaunch(AutoUpgrader& autoUpgrader, Launcher& launcher, const std::string& launchPath);
-    ~AutoUpgraderLaunch() = default;
 
     UpgradeResult Upgrade() override;
 

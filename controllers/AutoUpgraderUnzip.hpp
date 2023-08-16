@@ -14,7 +14,7 @@ public:
     UpgradeResult Upgrade() override;
 
 private:
-    bool ContainsZipExtension(const std::string& file) const;
+    bool ContainsZipExtension(const std::string_view& file) const;
     std::optional<bool> UnzipSelectedAsset();
     bool UnzipLastReleaseAssets();
 
