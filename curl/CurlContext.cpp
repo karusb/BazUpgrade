@@ -10,7 +10,7 @@ CurlContext::~CurlContext()
     curl_easy_cleanup(curl);
 }
 
-CURL* CurlContext::Get()
+CURL* CurlContext::GetContext()
 {
     return curl;
 }

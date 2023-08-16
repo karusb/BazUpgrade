@@ -16,8 +16,8 @@ public:
     CurlContext();
     virtual ~CurlContext();
 
-    CURL* Get();
-protected:
+    CURL* GetContext();
+private:
     CURL* curl;
 };
 #endif
