@@ -6,7 +6,7 @@ class Unzipper
 {
 public:
     Unzipper() = default;
-    ~Unzipper() = default;
+    virtual ~Unzipper() = default;
     Unzipper(const Unzipper& other) = delete;
     Unzipper& operator=(const Unzipper& other) = delete;
 

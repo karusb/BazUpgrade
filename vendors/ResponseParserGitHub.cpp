@@ -40,13 +40,13 @@ std::vector<std::string_view> ResponseParserGitHub::DivideReleases(std::string_v
 {
     std::vector<std::string_view> parsed;
 
-    for (auto releaseStart = response.find("{\"url\":"); releaseStart != response.npos; releaseStart = response.find("},{\"url\":", response.find("zipball_url", releaseStart + 8)))
+    for (auto releaseStart = response.find("{\"url\":"); releaseStart != std::string_view::npos; releaseStart = response.find("},{\"url\":", response.find("zipball_url", releaseStart + 8)))
     {
         auto endofRelease = response.find("zipball_url", releaseStart + 8);
         auto nextUrl = response.find("},{\"url\":", endofRelease);
-            if (nextUrl == response.npos)
+            if (nextUrl == std::string_view::npos)
                 nextUrl = response.find("}", endofRelease);
-            if (nextUrl == response.npos)
+            if (nextUrl == std::string_view::npos)
                 nextUrl = response.find("}]", endofRelease);
         parsed.push_back(response.substr(releaseStart, nextUrl - releaseStart));
     }
@@ -59,10 +59,10 @@ void ResponseParserGitHub::ParseReleases(const std::string &response, std::vecto
     std::string zipExtension = ".zip";
     std::string tarExtension = ".tar.gz";
     auto jsonReleases = DivideReleases(response);
-    for (auto& jsonRelease : jsonReleases)
+    for (const auto& jsonRelease : jsonReleases)
     {
         std::vector<Asset> assets;
-        for (auto& asset : AssetUrls(jsonRelease))
+        for (const auto& asset : AssetUrls(jsonRelease))
             assets.push_back({std::string(asset), std::string(FilenameFromUrl(asset))});
             
         releases.push_back(

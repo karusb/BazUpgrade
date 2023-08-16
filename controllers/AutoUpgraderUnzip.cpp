@@ -31,7 +31,7 @@ UpgradeResult AutoUpgraderUnzip::Upgrade()
 
 bool AutoUpgraderUnzip::ContainsZipExtension(const std::string &file) const
 {
-    return file.find(".zip") != file.npos;
+    return file.find(".zip") != std::string::npos;
 }
 
 std::optional<bool> AutoUpgraderUnzip::UnzipSelectedAsset()

@@ -7,14 +7,14 @@ class CurlGlobalContext
 {
 public:
     CurlGlobalContext();
-    ~CurlGlobalContext();
+    virtual ~CurlGlobalContext();
 };
 
 class CurlContext
 {
 public:
     CurlContext();
-    ~CurlContext();
+    virtual ~CurlContext();
 
     CURL* Get();
 protected:

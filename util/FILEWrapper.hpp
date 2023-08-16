@@ -7,6 +7,8 @@ class FILEWrapper
 public:
     FILEWrapper(const char* filename, const char* mode);
     ~FILEWrapper();
+    FILEWrapper(const FILEWrapper& other) = delete;
+    FILEWrapper& operator=(const FILEWrapper& other) = delete;
 
     FILE* Get();
     int Error();

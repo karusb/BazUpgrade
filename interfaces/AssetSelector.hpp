@@ -9,7 +9,7 @@ class AssetSelector
 public:
 
     AssetSelector() = default;
-    ~AssetSelector() = default;
+    virtual ~AssetSelector() = default;
     AssetSelector(const AssetSelector& other) = delete;
     AssetSelector& operator=(const AssetSelector& other) = delete;
 

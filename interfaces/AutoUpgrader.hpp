@@ -13,7 +13,7 @@ class AutoUpgrader
 {
 public:
     AutoUpgrader() = default;
-    ~AutoUpgrader() = default;
+    virtual ~AutoUpgrader() = default;
     AutoUpgrader(const AutoUpgrader& other) = delete;
     AutoUpgrader& operator=(const AutoUpgrader& other) = delete;
 

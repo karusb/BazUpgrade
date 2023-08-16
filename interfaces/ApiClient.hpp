@@ -7,7 +7,7 @@ class ApiClient
 {
 public:
     ApiClient() = default;
-    ~ApiClient() = default;
+    virtual ~ApiClient() = default;
     ApiClient(const ApiClient& other) = delete;
     ApiClient& operator=(const ApiClient& other) = delete;
 

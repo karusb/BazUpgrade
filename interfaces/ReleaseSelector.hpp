@@ -9,7 +9,7 @@ class ReleaseSelector
 public:
 
     ReleaseSelector() = default;
-    ~ReleaseSelector() = default;
+    virtual ~ReleaseSelector() = default;
     ReleaseSelector(const ReleaseSelector& other) = delete;
     ReleaseSelector& operator=(const ReleaseSelector& other) = delete;
 

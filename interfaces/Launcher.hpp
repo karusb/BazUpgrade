@@ -7,7 +7,7 @@ class Launcher
 public:
 
     Launcher() = default;
-    ~Launcher() = default;
+    virtual ~Launcher() = default;
     Launcher(const Launcher& other) = delete;
     Launcher& operator=(const Launcher& other) = delete;
 

@@ -6,7 +6,7 @@ class HTTPClient
 {
 public:
     HTTPClient() = default;
-    ~HTTPClient() = default;
+    virtual ~HTTPClient() = default;
     HTTPClient(const HTTPClient& other) = delete;
     HTTPClient& operator=(const HTTPClient& other) = delete;
 

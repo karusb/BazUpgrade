@@ -10,7 +10,7 @@ class Downloader
 public:
 
     Downloader() = default;
-    ~Downloader() = default;
+    virtual ~Downloader() = default;
     Downloader(const Downloader& other) = delete;
     Downloader& operator=(const Downloader& other) = delete;
 

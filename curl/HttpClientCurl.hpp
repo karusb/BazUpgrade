@@ -12,13 +12,13 @@ class HTTPClientCurl
 public:
     HTTPClientCurl();
 
-    bool Get(const std::string& url, std::string& response) override;
-    bool Post(const std::string& url, std::string& fields, std::string& response) override;
-    bool Download(const std::string& url, FILE* data) override;
+    virtual bool Get(const std::string& url, std::string& response) override;
+    virtual bool Post(const std::string& url, std::string& fields, std::string& response) override;
+    virtual bool Download(const std::string& url, FILE* data) override;
 
 private:
     bool PerformCurlRequest();
 
-    struct curl_slist* headers = NULL;
+    struct curl_slist* headers = nullptr;
 };
 #endif

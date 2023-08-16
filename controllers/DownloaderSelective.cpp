@@ -49,7 +49,7 @@ void DownloaderSelective::ParseReleases()
 bool DownloaderSelective::DownloadLatestReleaseAssets()
 {
     bool result = true;
-    for (auto& asset : latestRelease->assets)
+    for (const auto& asset : latestRelease->assets)
         result = result && apiClient.DownloadAsset(asset);
     return result;
 }

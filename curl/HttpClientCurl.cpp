@@ -43,9 +43,7 @@ bool HTTPClientCurl::Download(const std::string& url, FILE* data)
 
 bool HTTPClientCurl::PerformCurlRequest()
 {
-    CURLcode res = curl_easy_perform(curl);
-
-    if (res != CURLE_OK)
+    if (CURLcode res = curl_easy_perform(curl); res != CURLE_OK)
     {
         std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
         return false;

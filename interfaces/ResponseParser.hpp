@@ -10,7 +10,7 @@ class ResponseParser
 public:
 
     ResponseParser() = default;
-    ~ResponseParser() = default;
+    virtual ~ResponseParser() = default;
     ResponseParser(const ResponseParser& other) = delete;
     ResponseParser& operator=(const ResponseParser& other) = delete;
 
