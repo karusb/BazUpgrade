@@ -93,10 +93,13 @@ class Integration(unittest.TestCase):
         self.assertEqual(Path(state["activePath"]).read_text(), "synthetic application\n")
         self.assertEqual(self.client("apply")["status"], "upToDate")
 
-    def test_strict_options_reject_ambiguity_before_side_effects(self):
+    def test_option_contracts_reject_invalid_input_before_side_effects(self):
         for arguments in (
             ("apply", "--config", str(self.config_file), "--config", str(self.config_file)),
+            ("apply", "--config", str(self.config_file), "-c", str(self.config_file)),
             ("apply", "--config", str(self.config_file), "--wait-pid", "--notify-ready"),
+            ("apply", "--config", str(self.config_file), "--wait-pid"),
+            ("verify", "--config", str(self.config_file), "--file"),
             ("verify", "--config", str(self.config_file), "--file", "--unknown"),
             ("capabilities", "--config", str(self.config_file)),
             ("status", "--config", str(self.config_file), "--wait-pid", "0"),
@@ -104,7 +107,13 @@ class Integration(unittest.TestCase):
             with self.subTest(arguments=arguments):
                 self.assertEqual(self.call(UPDATER, *arguments, success=False)["status"], "error")
         unopened = self.root / "must-not-be-created"
-        self.call(PUBLISHER, "publish", "--repo", str(unopened), "--keys", str(self.root / "unopened-keys"), success=False)
+        for arguments in (
+            ("--repo", str(unopened), "--keys", str(self.root / "unopened-keys")),
+            ("--repo", str(unopened), "--repo", str(unopened), "--keys", str(self.root / "unopened-keys")),
+            ("--repo", str(unopened), "--keys"),
+        ):
+            with self.subTest(publisher_arguments=arguments):
+                self.call(PUBLISHER, "publish", *arguments, success=False)
         self.assertFalse(unopened.exists())
         self.assertFalse((self.root / "unopened-keys").exists())
         self.assertFalse((self.root / "state").exists())

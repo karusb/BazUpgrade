@@ -13,7 +13,6 @@ class ToolCli final : public BazPO::Cli
   public:
     ToolCli(int argc, const char **argv, const char *description) : BazPO::Cli(argc, argv, description)
     {
-        strictParsing();
         changeIO(&diagnostics);
     }
     std::string Help()

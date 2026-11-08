@@ -22,10 +22,12 @@ int main(int argc, const char *argv[])
         auto &command = cli.tagless(1, "command")
                             .constrain(std::deque<std::string>{"check", "apply", "status", "verify",
                                                                "reconcile", "rollback", "capabilities"});
-        auto &config = cli.option("--config", "-c", "Trusted local client configuration");
-        auto &file = cli.option("--file", "", "Downloaded artifact to verify");
-        auto &pid = cli.option("--wait-pid", "", "Application PID to await", "0");
+        auto &config =
+            cli.option("--config", "-c", "Trusted local client configuration").withMaxValueCount(1);
+        auto &file = cli.option("--file", "", "Downloaded artifact to verify").withMaxValueCount(1);
+        auto &pid = cli.option("--wait-pid", "", "Application PID to await", "0").withMaxValueCount(1);
         auto &installed = cli.option("--installed", "", "Observed native installation result")
+                              .withMaxValueCount(1)
                               .constrain(std::deque<std::string>{"true", "false"});
         auto &notify = cli.flag("--notify-ready", "Emit readiness before waiting for application exit");
         auto &control = cli.flag("--control-stdin", "Accept cooperative cancellation on stdin");
@@ -40,6 +42,9 @@ int main(int argc, const char *argv[])
             return 0;
         }
         auto action = command.valueAs<std::string>();
+        for (const auto *option : {&config, &file, &pid, &installed})
+            Require(!option->exists() || option->values().size() == 1, ErrorCode::invalidInput,
+                    "A provided client option requires one explicit value");
         Require(action == "apply" || (!pid.exists() && !notify.exists()), ErrorCode::invalidInput,
                 "Readiness and PID options require apply");
         Require(action == "verify" || !file.exists(), ErrorCode::invalidInput, "--file requires verify");
@@ -54,7 +59,11 @@ int main(int argc, const char *argv[])
         }
         auto configuration = Required(config);
         if (action == "verify")
-            Required(file);
+        {
+            auto artifact = fs::u8path(Required(file));
+            Require(!fs::is_symlink(fs::symlink_status(artifact)) && fs::is_regular_file(artifact),
+                    ErrorCode::invalidInput, "--file requires an existing regular file");
+        }
         if (action == "reconcile")
             Required(installed);
         std::signal(SIGINT, Cancel);

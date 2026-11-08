@@ -25,7 +25,7 @@ if(NOT TARGET BazPO::BazPO)
     include(FetchContent)
     set(BAZPO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
     set(BAZPO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    FetchContent_Declare(BazPO GIT_REPOSITORY https://github.com/karusb/BazPO.git GIT_TAG 64c93c3240b71c4ab1e70687122ac90a55f92a03)
+    FetchContent_Declare(BazPO GIT_REPOSITORY https://github.com/karusb/BazPO.git GIT_TAG 8c0f7f39db5a7f677663c5aa7756e534c31f92bb)
     FetchContent_MakeAvailable(BazPO)
 endif()
 

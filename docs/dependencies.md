@@ -16,7 +16,7 @@ CurlWrapper remains private. BazUpgrade never fetches its private source or dist
 
 The full C++ workflow runs inside a private caller repository. Public fork checks only run on public source, without private credentials. Read [development](development.md) before changing this boundary.
 
-BazPO supplies parsing, generated help, option constraints and strict parsing. The strict mode is opt-in for existing BazPO consumers. Its update also fixes owned defaults and header-only linkage across translation units.
+BazPO supplies parsing, generated help and option constraints. Scalar tool options use `withMaxValueCount(1)` to reject repeated tags, including aliases. The tools require an explicit value for each provided scalar option before update or publishing operations. BazPO retains raw values, optional values and custom tag syntax; it also owns defaults and supports header-only linkage across translation units.
 
 Unpinned 11Zip, bundled old curl and v1 GoogleTest/gMock build scaffolding are retired from BazUpgrade. Custom Python build/sync/document/package scripts have been removed. Python remains only where the behavior under test requires it.
 

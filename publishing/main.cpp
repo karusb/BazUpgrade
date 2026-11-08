@@ -15,21 +15,28 @@ int main(int argc, const char *argv[])
                 .constrain(std::deque<std::string>{"init", "pack", "publish", "refresh", "restore-metadata",
                                                    "rotate-root", "export-electron", "export-appinstaller",
                                                    "create-test-certificate", "sign-windows"});
-        auto &repo = cli.option("--repo", "", "Public repository directory");
-        auto &keys = cli.option("--keys", "", "Protected signing-state directory outside the web root");
-        auto &directory = cli.option("--directory", "", "Portable application source directory");
-        auto &output = cli.option("--output", "", "Archive or native feed output");
-        auto &artifact = cli.option("--artifact", "", "Completed release artifact");
-        auto &target = cli.option("--target", "", "Logical target path");
-        auto &descriptor = cli.option("--descriptor", "", "Signed application descriptor JSON");
-        auto &baseUrl = cli.option("--base-url", "", "Public HTTPS repository base URL");
+        auto &repo = cli.option("--repo", "", "Public repository directory").withMaxValueCount(1);
+        auto &keys = cli.option("--keys", "", "Protected signing-state directory outside the web root")
+                         .withMaxValueCount(1);
+        auto &directory =
+            cli.option("--directory", "", "Portable application source directory").withMaxValueCount(1);
+        auto &output = cli.option("--output", "", "Archive or native feed output").withMaxValueCount(1);
+        auto &artifact = cli.option("--artifact", "", "Completed release artifact").withMaxValueCount(1);
+        auto &target = cli.option("--target", "", "Logical target path").withMaxValueCount(1);
+        auto &descriptor =
+            cli.option("--descriptor", "", "Signed application descriptor JSON").withMaxValueCount(1);
+        auto &baseUrl = cli.option("--base-url", "", "Public HTTPS repository base URL").withMaxValueCount(1);
         auto &unsignedFeed =
             cli.option("--unsigned-native-feed", "", "Explicit unsigned Electron feed acknowledgement")
+                .withMaxValueCount(1)
                 .constrain(std::deque<std::string>{"true"});
         auto &thumbprint =
-            cli.option("--certificate-thumbprint", "", "Explicit CurrentUser/My signing identity");
-        auto &signTool = cli.option("--sign-tool", "", "Absolute trusted Windows SDK signtool executable");
-        auto &timestamp = cli.option("--timestamp-url", "", "Optional HTTPS RFC 3161 timestamp service");
+            cli.option("--certificate-thumbprint", "", "Explicit CurrentUser/My signing identity")
+                .withMaxValueCount(1);
+        auto &signTool = cli.option("--sign-tool", "", "Absolute trusted Windows SDK signtool executable")
+                             .withMaxValueCount(1);
+        auto &timestamp = cli.option("--timestamp-url", "", "Optional HTTPS RFC 3161 timestamp service")
+                              .withMaxValueCount(1);
         cli.flag(
                "--version", [](const BazPO::Option &) { throw CliExit{std::string(Version) + "\n"}; },
                "Print tool version")
@@ -41,6 +48,10 @@ int main(int argc, const char *argv[])
             return 0;
         }
         auto action = command.valueAs<std::string>();
+        for (const auto *option : {&repo, &keys, &directory, &output, &artifact, &target, &descriptor,
+                                   &baseUrl, &unsignedFeed, &thumbprint, &signTool, &timestamp})
+            Require(!option->exists() || option->values().size() == 1, ErrorCode::invalidInput,
+                    "A provided publisher option requires one explicit value");
         bool pack = action == "pack", publish = action == "publish";
         bool certificate = action == "create-test-certificate", signing = action == "sign-windows";
         bool electron = action == "export-electron", feed = electron || action == "export-appinstaller";

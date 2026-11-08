@@ -2,6 +2,8 @@
 
 This records observed local checks for the v2 review changes. A configured workflow is not an executed workflow. No live GitHub Actions run, release tag or public release was created; commits use [skip ci].
 
+The option-limit follow-up reran all 117 BazPO tests on Windows and Linux, plus the Windows CurlWrapper HTTP suite and BazUpgrade native/CLI/reference-TUF suites. The signing/reboot E2E and other platform results below describe the earlier v2 baseline; they were not rerun for this parser change.
+
 ## Build and behavior
 
 | Check | Observed result |
@@ -10,7 +12,7 @@ This records observed local checks for the v2 review changes. A configured workf
 | Windows CLI / C ABI / loopback / official TUF 7.0.1 | 9 integration tests passed; reference interoperability required |
 | Linux / GCC 9 / CMake 3.31.6 | 33 C++ behavior cases and 9 integration tests passed |
 | Linux reference client | Local Python 3.8 environment used TUF 3.0 compatibility; current TUF 7.0.1 was checked separately on Windows |
-| BazPO | 89 regression tests passed, including strict parsing, owned defaults and multiple translation units |
+| BazPO | 117 regression tests passed on Windows and Linux, including per-option value limits, owned defaults and multiple translation units |
 | CurlWrapper | HTTP/cancellation/isolation/concurrency suite passed on Windows and Linux |
 | Node SDK | 6 tests passed |
 | Installed C++ SDK consumer | Compiled and ran on Windows and Linux |

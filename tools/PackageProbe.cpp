@@ -33,8 +33,7 @@ int main(int argc, const char *argv[])
     try
     {
         BazPO::Cli cli(argc, argv, "Verify the packaged C ABI");
-        cli.strictParsing();
-        cli.option("--library", "", "Absolute packaged SDK library").mandatory();
+        cli.option("--library", "", "Absolute packaged SDK library").withMaxValueCount(1).mandatory();
         cli.parse();
         auto path = std::filesystem::absolute(std::filesystem::u8path(cli.valueAs<std::string>("--library")));
         Library library;
