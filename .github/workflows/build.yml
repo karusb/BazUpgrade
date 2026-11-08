@@ -1,44 +1,143 @@
-name: Build
+name: Build, test and package
 on:
-  push:
-    branches:
-      - main
-  pull_request:
-    types: [opened, synchronize, reopened]
+  workflow_call:
+    inputs:
+      bazupgrade-ref:
+        type: string
+        required: true
+      curlwrapper-ref:
+        type: string
+        required: true
+    secrets:
+      CURLWRAPPER_READ_TOKEN:
+        required: true
+permissions:
+  contents: read
 jobs:
   build:
-    name: Build
-    runs-on: ubuntu-latest
+    name: C++ / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
     env:
-      BUILD_WRAPPER_OUT_DIR: build_wrapper_output_directory # Directory where build-wrapper output will be placed
+      BAZUPGRADE_REQUIRE_REFERENCE_TUF: '1'
     steps:
-      - uses: actions/checkout@v3
-      - uses: seanmiddleditch/gha-setup-ninja@master
-        with:
-          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
-      - name: Install sonar-scanner and build-wrapper
-        uses: SonarSource/sonarcloud-github-c-cpp@v1
-      - name: Set up Python 3.8 for gcovr
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.8
-      - name: install gcovr 5.0 # 5.1 is not supported
-        run: |
-          pip install gcovr==5.0
-      - name: Run build-wrapper
-        run: |
-          sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
-          cmake --preset=Coverage -S . -B build
-          build-wrapper-linux-x86-64 --out-dir ${{ env.BUILD_WRAPPER_OUT_DIR }} cmake --build build
-      - name: Tests
-        run: | 
-          ctest --test-dir build
-      - name: Collect coverage into one XML report
-        run: |
-          gcovr --sonarqube > coverage.xml
-      - name: Run sonar-scanner
+      - name: Validate immutable input references
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          BAZ_REF: ${{ inputs.bazupgrade-ref }}
+          CURL_REF: ${{ inputs.curlwrapper-ref }}
+          PRIVATE_CALLER: ${{ github.event.repository.private }}
         run: |
-          sonar-scanner --define sonar.cfamily.build-wrapper-output="${{ env.BUILD_WRAPPER_OUT_DIR }}"
+          test "$PRIVATE_CALLER" = true
+          [[ "$BAZ_REF" =~ ^[0-9a-f]{40}$ ]] && [[ "$CURL_REF" =~ ^[0-9a-f]{40}$ ]]
+      - name: Checkout public BazUpgrade
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: karusb/BazUpgrade
+          ref: ${{ inputs.bazupgrade-ref }}
+          path: bazupgrade
+          persist-credentials: false
+      - name: Checkout private CurlWrapper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: karusb/CurlWrapper
+          ref: ${{ inputs.curlwrapper-ref }}
+          token: ${{ secrets.CURLWRAPPER_READ_TOKEN }}
+          path: curlwrapper
+          persist-credentials: false
+      - uses: ./bazupgrade/.github/actions/dependencies
+        with:
+          source: curlwrapper
+      - name: Select CMake preset
+        shell: bash
+        run: |
+          preset=release
+          if [[ "$RUNNER_OS" == "Windows" ]]; then preset=windows; fi
+          echo "BUILD_PRESET=$preset" >> "$GITHUB_ENV"
+      - name: Configure BazUpgrade
+        working-directory: bazupgrade
+        run: cmake --preset ${{ env.BUILD_PRESET }}
+      - name: Build BazUpgrade tools and SDK
+        working-directory: bazupgrade
+        run: cmake --build --preset ${{ env.BUILD_PRESET }} --parallel 4
+      - name: C++ / CLI / C ABI / reference TUF tests
+        working-directory: bazupgrade
+        run: ctest --preset ${{ env.BUILD_PRESET }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+      - name: Node SDK tests
+        working-directory: bazupgrade
+        run: node --test sdk/node/test.mjs
+      - name: Install SDK
+        working-directory: bazupgrade
+        run: cmake --install out/${{ env.BUILD_PRESET }} --config Release
+      - name: Compile installed C++ consumer
+        shell: bash
+        run: |
+          args=("-DCMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/bazupgrade/out/installed;$BAZUPGRADE_DEPENDENCY_PREFIX;$CMAKE_PREFIX_PATH")
+          if [[ "$RUNNER_OS" == "Windows" ]]; then args+=(-G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" "-DVCPKG_INSTALLED_DIR=$BAZUPGRADE_VCPKG_INSTALLED_DIR" -DVCPKG_TARGET_TRIPLET=x64-windows-static '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>'); fi
+          cmake -S bazupgrade/examples/cpp -B consumer "${args[@]}"
+          cmake --build consumer --config Release --parallel 4
+      - name: Create release archives
+        working-directory: bazupgrade
+        run: cpack --preset ${{ env.BUILD_PRESET }}
+      - name: Execute packaged binaries and verify public package contents
+        shell: bash
+        working-directory: bazupgrade
+        run: cmake "-DPACKAGE_DIR=$PWD/out/packages" "-DTOOLS_CONFIG=$PWD/out/$BUILD_PRESET/package-tools-Release.cmake" -P cmake/VerifyPackages.cmake
+      - name: Record release source identity
+        shell: bash
+        env:
+          BAZ_REF: ${{ inputs.bazupgrade-ref }}
+          CURL_REF: ${{ inputs.curlwrapper-ref }}
+        run: |
+          printf '{"bazupgrade":"%s","curlwrapper":"%s","platform":"%s"}\n' "$BAZ_REF" "$CURL_REF" "$RUNNER_OS" > bazupgrade/out/packages/source.json
+      - name: Install Linux analysis tools
+        if: runner.os == 'Linux'
+        run: python -m pip install gcovr==8.4
+      - name: Configure coverage
+        if: runner.os == 'Linux'
+        working-directory: bazupgrade
+        run: cmake --preset coverage
+      - name: Build coverage
+        if: runner.os == 'Linux'
+        working-directory: bazupgrade
+        run: cmake --build --preset coverage --parallel 4
+      - name: Test coverage
+        if: runner.os == 'Linux'
+        working-directory: bazupgrade
+        run: ctest --preset coverage
+      - name: Report coverage
+        if: runner.os == 'Linux'
+        working-directory: bazupgrade
+        run: gcovr --root . --filter '.*/(controllers|crypto|curl|publishing|storage|tuf|util)/' --json-summary out/coverage/summary.json --print-summary out/coverage
+      - name: Configure sanitizers
+        if: runner.os == 'Linux'
+        working-directory: bazupgrade
+        run: cmake --preset sanitizers
+      - name: Build sanitizers
+        if: runner.os == 'Linux'
+        working-directory: bazupgrade
+        run: cmake --build --preset sanitizers --parallel 4
+      - name: Test ASan and UBSan behavior
+        if: runner.os == 'Linux'
+        working-directory: bazupgrade
+        run: ctest --preset sanitizers -R bazupgrade.behavior
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: runner.os == 'Linux'
+        with:
+          name: coverage
+          path: bazupgrade/out/coverage/summary.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: packages-${{ matrix.os }}
+          path: |
+            bazupgrade/out/packages/*.zip
+            bazupgrade/out/packages/*.tar.gz
+            bazupgrade/out/packages/source.json
+          if-no-files-found: error

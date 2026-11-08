@@ -1,0 +1,64 @@
+name: Private CMake dependency
+description: Build, test and install the separately checked out private CurlWrapper SDK.
+inputs:
+  source:
+    description: Checked out CurlWrapper source directory
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+      with:
+        python-version: '3.12'
+    - name: Install build and interoperability tools
+      shell: bash
+      run: python -m pip install cmake==3.31.6 ninja==1.11.1.4 -r bazupgrade/requirements-tests.txt
+    - name: Linux dependencies
+      if: runner.os == 'Linux'
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y libssl-dev libarchive-dev libcurl4-openssl-dev
+    - name: macOS dependencies
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install openssl@3 libarchive curl
+        echo "CMAKE_PREFIX_PATH=$(brew --prefix openssl@3);$(brew --prefix libarchive);$(brew --prefix curl)" >> "$GITHUB_ENV"
+    - name: Dependency environment
+      shell: bash
+      run: |
+        echo "BAZUPGRADE_DEPENDENCY_PREFIX=$GITHUB_WORKSPACE/dependencies/installed" >> "$GITHUB_ENV"
+        echo "VCPKG_ROOT=$GITHUB_WORKSPACE/vcpkg" >> "$GITHUB_ENV"
+        echo "BAZUPGRADE_VCPKG_INSTALLED_DIR=$GITHUB_WORKSPACE/dependencies/vcpkg_installed" >> "$GITHUB_ENV"
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      if: runner.os == 'Windows'
+      with:
+        repository: microsoft/vcpkg
+        ref: 6fdd23fa0a9479a9f9a1c48178696f60cf39255d
+        path: vcpkg
+        persist-credentials: false
+    - name: Bootstrap Windows dependencies
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: ./vcpkg/bootstrap-vcpkg.bat -disableMetrics
+    - name: Configure private CurlWrapper
+      shell: bash
+      env:
+        CURL_SOURCE: ${{ inputs.source }}
+      run: |
+        set -euo pipefail
+        args=(-DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$BAZUPGRADE_DEPENDENCY_PREFIX")
+        if [[ "$RUNNER_OS" == "Windows" ]]; then
+          args+=(-G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" "-DVCPKG_INSTALLED_DIR=$BAZUPGRADE_VCPKG_INSTALLED_DIR" -DVCPKG_TARGET_TRIPLET=x64-windows-static '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>')
+        else
+          args+=(-G Ninja)
+        fi
+        cmake -S "$CURL_SOURCE" -B dependencies/build "${args[@]}"
+    - name: Build private CurlWrapper
+      shell: bash
+      run: cmake --build dependencies/build --config Release --parallel 4
+    - name: Test private CurlWrapper
+      shell: bash
+      run: ctest --test-dir dependencies/build -C Release --output-on-failure
+    - name: Install private CurlWrapper SDK
+      shell: bash
+      run: cmake --install dependencies/build --config Release

@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.21)
+project(BazUpgradeConsumer LANGUAGES CXX)
+find_package(BazUpgrade 2 CONFIG REQUIRED)
+find_package(BazPO 0.3 CONFIG REQUIRED)
+add_executable(bazupgrade-consumer main.cpp)
+target_link_libraries(bazupgrade-consumer PRIVATE BazUpgrade::Core BazPO::BazPO)

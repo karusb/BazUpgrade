@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.png binary
+*.zip binary
+*.pdf binary
+*.patch whitespace=-blank-at-eol,-space-before-tab

@@ -1,0 +1,81 @@
+name: Publish validated release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing immutable version tag
+        required: true
+      bazupgrade-sha:
+        description: Exact reviewed BazUpgrade commit
+        required: true
+      private-build-run:
+        description: Successful private CurlWrapper bazupgrade.yml workflow_dispatch run ID
+        required: true
+permissions:
+  contents: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Validate release input
+        env:
+          SHA: ${{ inputs.bazupgrade-sha }}
+          RUN: ${{ inputs.private-build-run }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$RUN" =~ ^[0-9]+$ ]]
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.bazupgrade-sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify existing tag and version
+        env:
+          SHA: ${{ inputs.bazupgrade-sha }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse "$TAG^{commit}")" = "$SHA"
+          test "$TAG" = "v$(tr -d '\r\n' < VERSION.txt)"
+      - name: Download successful private build packages
+        env:
+          GH_TOKEN: ${{ secrets.CURLWRAPPER_ARTIFACT_READ_TOKEN }}
+          RUN: ${{ inputs.private-build-run }}
+        run: |
+          set -euo pipefail
+          gh api "repos/karusb/CurlWrapper/actions/runs/$RUN" > run.json
+          jq -e '.status == "completed" and .conclusion == "success" and .event == "workflow_dispatch" and .path == ".github/workflows/bazupgrade.yml"' run.json >/dev/null
+          gh run download "$RUN" --repo karusb/CurlWrapper --pattern 'packages-*' --dir validated
+      - name: Verify source identity and platform completeness
+        env:
+          SHA: ${{ inputs.bazupgrade-sha }}
+        run: |
+          set -euo pipefail
+          for platform in ubuntu-24.04 windows-2025 macos-15; do
+            identity="validated/packages-$platform/source.json"
+            test -f "$identity"
+            case "$platform" in ubuntu-*) os=Linux;; windows-*) os=Windows;; macos-*) os=macOS;; esac
+            curl_sha="$(jq -r '.head_sha' run.json)"
+            jq -e --arg sha "$SHA" --arg curl "$curl_sha" --arg os "$os" '.bazupgrade == $sha and .curlwrapper == $curl and .platform == $os' "$identity" >/dev/null
+            test "$(find "validated/packages-$platform" -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) | wc -l)" = 2
+          done
+      - name: Publish archives without replacing previous releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo 'An existing release must not be overwritten' >&2
+            exit 1
+          fi
+          mkdir release
+          find validated -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp -n {} release/ \;
+          cd release
+          sha256sum *.zip *.tar.gz > SHA256SUMS.txt
+          args=(--draft --verify-tag --generate-notes)
+          if [[ "$TAG" == *-* ]]; then args+=(--prerelease); fi
+          gh release create "$TAG" ./* "${args[@]}"

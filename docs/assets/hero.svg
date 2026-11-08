@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title description">
+<title id="title">BazUpgrade — one update core, your infrastructure</title>
+<desc id="description">A C++ update engine connects trusted releases to portable applications and native package installers.</desc>
+<defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#0b1020"/><stop offset="1" stop-color="#172344"/></linearGradient><linearGradient id="accent"><stop stop-color="#49e0c1"/><stop offset="1" stop-color="#8c9dff"/></linearGradient><pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#ffffff" stroke-opacity=".035"/></pattern></defs>
+<rect width="1200" height="420" rx="24" fill="url(#bg)"/><rect width="1200" height="420" rx="24" fill="url(#grid)"/>
+<g font-family="Inter,Segoe UI,Arial,sans-serif"><rect x="64" y="54" width="245" height="28" rx="14" fill="#49e0c1" fill-opacity=".12"/><text x="80" y="73" font-size="12" font-weight="700" letter-spacing="1.2" fill="#67efd3">C++ UPDATE INFRASTRUCTURE</text>
+<text x="64" y="161" fill="#f1f5ff" font-weight="750" font-size="64">BazUpgrade</text><text x="66" y="211" fill="#c2cee9" font-size="27">One update core.</text><text x="66" y="250" fill="#c2cee9" font-size="27">Your applications. Your infrastructure.</text>
+<g font-family="ui-monospace,Consolas,monospace" font-size="13" fill="#a8b7d5"><text x="66" y="325">TUF TRUST</text><text x="205" y="325">NATIVE ADAPTERS</text><text x="391" y="325">SELF-HOSTED</text></g>
+<path d="M719 210H785M935 210h64M1080 210h35M1028 210v-86h86M1028 210v86h86" stroke="url(#accent)" stroke-width="2" fill="none" stroke-dasharray="5 5"/>
+<rect x="630" y="173" width="115" height="74" rx="14" fill="#172640" stroke="#355270"/><text x="652" y="204" fill="#65e6cf" font-size="12" font-weight="700">SIGNED</text><text x="652" y="226" fill="#e5edfc" font-size="14">releases</text>
+<rect x="785" y="153" width="180" height="114" rx="18" fill="#192d48" stroke="#58d6c6"/><path d="M865 174l15 6v15c0 11-15 20-15 20s-15-9-15-20v-15z" fill="none" stroke="#65e6cf" stroke-width="2"/><path d="m858 193 5 5 9-11" fill="none" stroke="#65e6cf" stroke-width="2"/><text x="812" y="244" fill="#e9f5ff" font-size="17" font-weight="650">BazUpgrade core</text>
+<g fill="#1b2b48" stroke="#51698f"><rect x="1080" y="93" width="88" height="62" rx="12"/><rect x="1080" y="179" width="88" height="62" rx="12"/><rect x="1080" y="265" width="88" height="62" rx="12"/></g>
+<g fill="#dce8ff" font-size="13" text-anchor="middle"><text x="1124" y="130">Portable</text><text x="1124" y="216">Native</text><text x="1124" y="302">SDKs</text></g>
+<text x="785" y="360" fill="#7f94b8" font-size="12">VERIFY → PREPARE → APPLY → RECONCILE</text></g></svg>

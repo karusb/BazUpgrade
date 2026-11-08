@@ -1,0 +1,2 @@
+#pragma once
+namespace baz { inline constexpr char Version[] = "@BAZUPGRADE_VERSION@"; }

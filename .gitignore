@@ -145,5 +145,18 @@ Backup*/
 UpgradeLog*.XML
 UpgradeLog*.htm
 
+# Local update repositories and validation environments
+.dependencies/
+.venv/
+__pycache__/
+*.pyc
+private-signing/
+*.pem
+CMakeUserPresets.json
+*.cer
+*.p12
+e2e/windows/.env
+e2e/windows/workspace/
+
 # Microsoft Fakes
 FakesAssemblies/

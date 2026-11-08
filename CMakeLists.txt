@@ -1,67 +1,117 @@
-﻿# CMakeList.txt : Top-level CMake project file, do global configuration
-# and include sub-projects here.
-#
-cmake_minimum_required (VERSION 3.12)
-
-project(BazUpgrade VERSION 1.0.0 DESCRIPTION "BazUpgrade")
-
-set (CMAKE_CXX_STANDARD 17)
-set (CMAKE_CXX_STANDARD_REQUIRED ON)
-set (CMAKE_CXX_EXTENSIONS OFF)
-
-SET(requiredlibs)
-SET(DOWNLOAD_EXTRACT_TIMESTAMP ON)
-
-add_executable (BazUpgrade
- "BazUpgrade.cpp" 
-)
-target_include_directories(BazUpgrade PUBLIC)
-set_property(TARGET BazUpgrade PROPERTY CXX_STANDARD 17)
-
-include(ExternalProject)
-include(FetchContent)
-FetchContent_Declare(
-  BazPO
-  GIT_REPOSITORY https://github.com/karusb/BazPO.git
-  GIT_TAG        v0.2.1
-)
-
-FetchContent_MakeAvailable(BazPO)
-
-include(FetchContent)
-FetchContent_Declare(
-  googletest
-  URL https://github.com/google/googletest/archive/609281088cfefc76f9d0ce82e1ff6c30cc3591e5.zip
-)
-# For Windows: Prevent overriding the parent project's compiler/linker settings
-set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-
-FetchContent_GetProperties(googletest)
-if(NOT googletest_POPULATED)
-  FetchContent_Populate(googletest)
-  add_subdirectory(${googletest_SOURCE_DIR} ${googletest_BINARY_DIR} EXCLUDE_FROM_ALL)
-endif()
-set_property(TARGET gtest PROPERTY CXX_STANDARD 17)
-
-include(GoogleTest)
+cmake_minimum_required(VERSION 3.25)
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.txt" BAZUPGRADE_VERSION LIMIT_COUNT 1)
+string(REGEX MATCH "^[0-9]+[.][0-9]+[.][0-9]+" BAZUPGRADE_BASE_VERSION "${BAZUPGRADE_VERSION}")
+project(BazUpgrade VERSION ${BAZUPGRADE_BASE_VERSION} DESCRIPTION "A TUF-based C++ update infrastructure" LANGUAGES C CXX)
+set(CMAKE_CXX_EXTENSIONS OFF)
+configure_file(interfaces/Version.hpp.in ${CMAKE_CURRENT_BINARY_DIR}/include/interfaces/Version.hpp @ONLY)
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 include(CTest)
-enable_testing()
+option(BAZUPGRADE_COVERAGE "Instrument project code for coverage" OFF)
+option(BAZUPGRADE_SANITIZERS "Enable address and undefined behavior sanitizers" OFF)
+find_package(OpenSSL 3.0 REQUIRED)
+find_package(LibArchive REQUIRED)
+find_package(nlohmann_json 3.12 QUIET)
+if(NOT TARGET nlohmann_json::nlohmann_json)
+    include(FetchContent)
+    set(JSON_Install ON CACHE BOOL "" FORCE)
+    FetchContent_Declare(nlohmann_json URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa)
+    FetchContent_MakeAvailable(nlohmann_json)
+endif()
+find_package(Threads REQUIRED)
+find_package(CurlWrapper 2.0 CONFIG REQUIRED)
+find_package(BazPO 0.3 CONFIG QUIET)
+if(NOT TARGET BazPO::BazPO)
+    include(FetchContent)
+    set(BAZPO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BAZPO_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(BazPO GIT_REPOSITORY https://github.com/karusb/BazPO.git GIT_TAG 64c93c3240b71c4ab1e70687122ac90a55f92a03)
+    FetchContent_MakeAvailable(BazPO)
+endif()
 
-set(BazUpgradePath ${CMAKE_CURRENT_LIST_DIR})
+add_library(bazupgrade STATIC
+    util/Json.cpp util/ControlChannel.cpp crypto/OpenSslCrypto.cpp storage/FileLock.cpp storage/MetadataDirectory.cpp
+    curl/RepositoryTransport.cpp tuf/TufClient.cpp
+    controllers/PortableInstaller.cpp controllers/NativeInstaller.cpp controllers/UpdateClient.cpp
+    publishing/RepositoryPublisher.cpp)
+add_library(BazUpgrade::Core ALIAS bazupgrade)
+set_target_properties(bazupgrade PROPERTIES EXPORT_NAME Core OUTPUT_NAME bazupgrade-core POSITION_INDEPENDENT_CODE ON)
+target_compile_features(bazupgrade PUBLIC cxx_std_17)
+target_include_directories(bazupgrade PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sdk/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/bazupgrade>
+    $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+target_link_libraries(bazupgrade PUBLIC OpenSSL::Crypto LibArchive::LibArchive nlohmann_json::nlohmann_json CurlWrapper::CurlWrapper Threads::Threads)
+if(MSVC)
+    target_compile_definitions(bazupgrade PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_compile_options(bazupgrade PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(bazupgrade PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+if(BAZUPGRADE_COVERAGE AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(bazupgrade PUBLIC --coverage -O0 -g)
+    target_link_options(bazupgrade PUBLIC --coverage)
+endif()
+if(BAZUPGRADE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(bazupgrade PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
+    target_link_options(bazupgrade PUBLIC -fsanitize=address,undefined)
+endif()
+add_executable(bazupgrade_cli BazUpgrade.cpp)
+set_target_properties(bazupgrade_cli PROPERTIES OUTPUT_NAME bazupgrade)
+target_link_libraries(bazupgrade_cli PRIVATE bazupgrade BazPO::BazPO)
+add_executable(BazUpgradePublisher publishing/main.cpp)
+set_target_properties(BazUpgradePublisher PROPERTIES OUTPUT_NAME bazupgrade-publish)
+target_link_libraries(BazUpgradePublisher PRIVATE bazupgrade BazPO::BazPO)
+add_library(bazupgrade_sdk SHARED sdk/bazupgrade.cpp)
+add_executable(bazupgrade_package_probe tools/PackageProbe.cpp)
+target_compile_features(bazupgrade_package_probe PRIVATE cxx_std_17)
+target_link_libraries(bazupgrade_package_probe PRIVATE BazPO::BazPO ${CMAKE_DL_LIBS})
+file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/package-tools-$<CONFIG>.cmake" CONTENT "set(PACKAGE_PROBE [==[$<TARGET_FILE:bazupgrade_package_probe>]==])\nset(BAZUPGRADE_VERSION [==[${BAZUPGRADE_VERSION}]==])\nset(EXE_SUFFIX [==[${CMAKE_EXECUTABLE_SUFFIX}]==])\n")
+target_compile_definitions(bazupgrade_sdk PRIVATE BAZUPGRADE_BUILD_DLL)
+target_link_libraries(bazupgrade_sdk PRIVATE bazupgrade)
+set_target_properties(bazupgrade_sdk PROPERTIES OUTPUT_NAME bazupgrade-sdk WINDOWS_EXPORT_ALL_SYMBOLS OFF VERSION ${PROJECT_VERSION} SOVERSION 2)
+if(WIN32)
+    enable_language(RC)
+    target_sources(bazupgrade PRIVATE util/WindowsProcess.cpp)
+    target_link_libraries(bazupgrade PRIVATE ntdll)
+    target_sources(BazUpgradePublisher PRIVATE publishing/WindowsSigning.cpp)
+    target_link_libraries(BazUpgradePublisher PRIVATE crypt32 ncrypt ole32)
+    foreach(tool bazupgrade_cli BazUpgradePublisher bazupgrade_package_probe)
+        target_sources(${tool} PRIVATE assets/windows.manifest)
+    endforeach()
+endif()
+if(BUILD_TESTING)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_executable(bazupgrade_tests tests/BehaviorTest.cpp tests/TrustTest.cpp tests/EngineTest.cpp)
+    add_executable(native_installer_fixture tests/InstallerFixture.cpp)
+    target_link_libraries(native_installer_fixture PRIVATE BazPO::BazPO)
+    target_link_libraries(bazupgrade_tests PRIVATE bazupgrade BazPO::BazPO)
+    add_test(NAME bazupgrade.behavior COMMAND bazupgrade_tests)
+    add_test(NAME bazupgrade.cli COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_test.py $<TARGET_FILE:bazupgrade_cli> $<TARGET_FILE:BazUpgradePublisher> $<TARGET_FILE:bazupgrade_sdk> $<TARGET_FILE:native_installer_fixture>)
+    set_tests_properties(bazupgrade.cli PROPERTIES TIMEOUT 120)
+endif()
 
-add_subdirectory(interfaces)
-add_subdirectory(curl)
-add_subdirectory(util)
-add_subdirectory(controllers)
-add_subdirectory(vendors)
-add_subdirectory(tracing)
-add_subdirectory(instantiations)
-
-add_dependencies(BazUpgrade bazupgrade.curl)
-target_link_libraries(
-  BazUpgrade PUBLIC
-  BazPO
-  bazupgrade.curl
-  bazupgrade.instantiations
-  bazupgrade.instantiations_tracing
-)
+install(TARGETS bazupgrade EXPORT BazUpgradeTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(TARGETS bazupgrade_cli BazUpgradePublisher bazupgrade_sdk RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(DIRECTORY interfaces util crypto storage tuf controllers curl publishing DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/bazupgrade FILES_MATCHING PATTERN "*.hpp" PATTERN test EXCLUDE PATTERN ToolCli.hpp EXCLUDE PATTERN ProcessId.hpp EXCLUDE PATTERN WindowsProcess.hpp EXCLUDE PATTERN WindowsSigning.hpp EXCLUDE)
+install(FILES sdk/bazupgrade.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/bazupgrade)
+install(DIRECTORY sdk/include/bazupgrade DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/interfaces/Version.hpp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/bazupgrade/interfaces)
+if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+    install(DIRECTORY ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/ DESTINATION ${CMAKE_INSTALL_DATADIR}/bazupgrade/third-party FILES_MATCHING PATTERN copyright PATTERN LICENSE*)
+endif()
+install(DIRECTORY docs examples sdk e2e DESTINATION ${CMAKE_INSTALL_DATADIR}/bazupgrade PATTERN __pycache__ EXCLUDE PATTERN "*.pyc" EXCLUDE PATTERN node_modules EXCLUDE)
+install(DIRECTORY cmake/ports DESTINATION ${CMAKE_INSTALL_DATADIR}/bazupgrade/cmake)
+install(FILES README.md LICENSE NOTICE DESTINATION ${CMAKE_INSTALL_DATADIR}/bazupgrade)
+install(EXPORT BazUpgradeTargets NAMESPACE BazUpgrade:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/BazUpgrade)
+configure_package_config_file(cmake/BazUpgradeConfig.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/BazUpgradeConfig.cmake INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/BazUpgrade)
+write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/BazUpgradeConfigVersion.cmake VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/BazUpgradeConfig.cmake ${CMAKE_CURRENT_BINARY_DIR}/BazUpgradeConfigVersion.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/BazUpgrade)
+set(CPACK_PACKAGE_VENDOR "BazUpgrade contributors")
+set(CPACK_PACKAGE_VERSION ${BAZUPGRADE_VERSION})
+set(CPACK_PACKAGE_FILE_NAME "BazUpgrade-${BAZUPGRADE_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+set(CPACK_GENERATOR "TGZ;ZIP")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+include(CPack)

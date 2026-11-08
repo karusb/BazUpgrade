@@ -1,0 +1,8 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+find_dependency(OpenSSL 3.0)
+find_dependency(LibArchive)
+find_dependency(nlohmann_json 3.12)
+find_dependency(CurlWrapper 2.0)
+include("${CMAKE_CURRENT_LIST_DIR}/BazUpgradeTargets.cmake")

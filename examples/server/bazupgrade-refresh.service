@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh BazUpgrade repository metadata
+[Service]
+Type=oneshot
+User=bazupgrade
+Group=bazupgrade
+ExecStart=/usr/local/bin/bazupgrade-publish refresh --repo /srv/bazupgrade --keys /var/lib/bazupgrade-signing
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/srv/bazupgrade /var/lib/bazupgrade-signing

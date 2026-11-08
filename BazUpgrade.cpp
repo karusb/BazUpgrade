@@ -1,71 +1,108 @@
-﻿#include "instantiations/BazUpgradeGitHub.hpp"
-#include "instantiations/TracingBazUpgradeGitHub.hpp"
-#include "instantiations/BazUpgradeGitHub.hpp"
-#include "BazPO.hpp"
-#include <string>
-
-using namespace std;
-using namespace BazPO;
-
-int main(int argc, const char* argv[])
-{   
-    string user = "karusb";
-    string repo = "FLF-FindLargeFolders";
-    string currentVersion = "2.1";
-    string assetIdentifier = "Portable";
-    bool alphaReleases = true;
-    bool downloadTarBall = false;
-    bool downloadZipBall = false;
-    bool unzipFiles = true;
-    string unzipPath = ".";
-    string launchPath = "\"BazWare FLF - Find Large Folders-2.2.exe\"";
-    bool tracing = true;
-
-    Cli po(argc, argv, "AutoUpgrader v1.0.0");
-
-    po.option("-r", [&user, &repo](const Option& option) 
-        { 
-            auto path = option.valueAs<string>();
-            auto separator = path.find('/');
-            user = path.substr(0, separator);
-            repo = path.substr(separator + 1);
+#include "controllers/UpdateClient.hpp"
+#include "interfaces/Version.hpp"
+#include "util/ControlChannel.hpp"
+#include "util/ProcessId.hpp"
+#include "util/ToolCli.hpp"
+#include <csignal>
+#include <iostream>
+namespace
+{
+baz::Cancellation cancellation;
+extern "C" void Cancel(int)
+{
+    cancellation.requested.store(true);
+}
+} // namespace
+int main(int argc, const char *argv[])
+{
+    using namespace baz;
+    try
+    {
+        ToolCli cli(argc, argv, "TUF-based application update client");
+        auto &command = cli.tagless(1, "command")
+                            .constrain(std::deque<std::string>{"check", "apply", "status", "verify",
+                                                               "reconcile", "rollback", "capabilities"});
+        auto &config = cli.option("--config", "-c", "Trusted local client configuration");
+        auto &file = cli.option("--file", "", "Downloaded artifact to verify");
+        auto &pid = cli.option("--wait-pid", "", "Application PID to await", "0");
+        auto &installed = cli.option("--installed", "", "Observed native installation result")
+                              .constrain(std::deque<std::string>{"true", "false"});
+        auto &notify = cli.flag("--notify-ready", "Emit readiness before waiting for application exit");
+        auto &control = cli.flag("--control-stdin", "Accept cooperative cancellation on stdin");
+        cli.flag(
+               "--version", [](const BazPO::Option &) { throw CliExit{std::string(Version) + "\n"}; },
+               "Print tool version")
+            .prioritize();
+        cli.parse();
+        if (!command.exists())
+        {
+            std::cout << cli.Help();
+            return 0;
         }
-    , "--repository", "Repository path on GitHub <user>/<repository>").withMaxValueCount(1).mandatory()
-    .constrain([](const Option& value) -> bool { return value.valueAs<string>().find('/') != string::npos; }, "incorrect format given for the repository path");
-    po.option("-v", [&currentVersion](const Option& option) { currentVersion = option.valueAs<string>(); }
-    , "--version", "Current version of the software for version comparison, when not provided downloads the latest release").withMaxValueCount(1);
-    po.option("-s", [&assetIdentifier](const Option& option) { assetIdentifier = option.valueAs<string>(); },
-        "--select", "Asset selector, downloads the first asset containing this value i.e Windows").withMaxValueCount(1);
-    po.flag("-a", [&alphaReleases](const Option& option) { alphaReleases = option.exists(); },
-        "Allow updating to pre-release or draft versions", "--alpha");
-    po.flag("-tb", [&downloadTarBall](const Option& option) { downloadTarBall = option.exists(); },
-        "Download Source Tarball", "--tarball");
-    po.flag("-zb", [&downloadZipBall](const Option& option) { downloadZipBall = option.exists(); },
-        "Download Source Zipball", "--zipball");
-    po.flag("-t", [&tracing](const Option& option) { tracing = option.exists(); },
-        "Enable tracing", "--tracing");
-    po.option("-uz", [&unzipFiles, &unzipPath](const Option& option) { unzipFiles = option.exists(); unzipPath = option.valueAs<string>();},
-        "--unzip", "Unzips all downloaded files to the provided path", ".").withMaxValueCount(1);
-    po.option("-l", [&launchPath](const Option& option) { launchPath = option.valueAs<string>();},
-        "--launch", "Launches the provided executable at path after download & extract").withMaxValueCount(1);
-    po.parse();
-
-//////////// TODO:
-    // - More Tracing classes / verbose option
-    // - Setup Repo and check GitHub Actions with Code Coverage
-    // - Readme
-    // - Unblocking launcher (maybe OS specific process launchers)
-    // - Zip file cleanup?
-    // - Self updater? (pass in arguments to the new release once downloaded)
-
-    if (!tracing)
-    {
-        BazUpgradeGitHub upgrader(user, repo, currentVersion, assetIdentifier, alphaReleases, downloadTarBall, downloadZipBall, unzipFiles, unzipPath, launchPath);
-        return upgrader.Upgrade();
+        auto action = command.valueAs<std::string>();
+        Require(action == "apply" || (!pid.exists() && !notify.exists()), ErrorCode::invalidInput,
+                "Readiness and PID options require apply");
+        Require(action == "verify" || !file.exists(), ErrorCode::invalidInput, "--file requires verify");
+        Require(action == "reconcile" || !installed.exists(), ErrorCode::invalidInput,
+                "--installed requires reconcile");
+        if (action == "capabilities")
+        {
+            Require(!config.exists() && !control.exists(), ErrorCode::invalidInput,
+                    "capabilities does not use client options");
+            std::cout << Capabilities().dump() << '\n';
+            return 0;
+        }
+        auto configuration = Required(config);
+        if (action == "verify")
+            Required(file);
+        if (action == "reconcile")
+            Required(installed);
+        std::signal(SIGINT, Cancel);
+        std::signal(SIGTERM, Cancel);
+#ifndef _WIN32
+        std::signal(SIGPIPE, SIG_IGN);
+#endif
+        ControlChannel channel(cancellation, control.exists());
+        UpdateClient client(ClientConfig::Load(fs::u8path(configuration)));
+        Json result;
+        if (action == "check")
+            result = client.Check(cancellation);
+        else if (action == "apply")
+        {
+            std::function<void()> ready;
+            if (notify.exists())
+                ready = [] { std::cout << "{\"event\":\"ready\"}" << std::endl; };
+            result = client.Apply(cancellation, ProcessId(pid.valueAs<std::string>()), ready);
+        }
+        else if (action == "status")
+            result = client.Status();
+        else if (action == "rollback")
+            result = client.Rollback();
+        else if (action == "reconcile")
+            result = client.Reconcile(installed.valueAs<std::string>() == "true");
+        else
+            result = client.VerifyFile(fs::u8path(file.valueAs<std::string>()), cancellation);
+        std::cout << result.dump() << '\n';
+        return 0;
     }
-    else
+    catch (const CliExit &done)
     {
-        TracingBazUpgradeGitHub upgrader(user, repo, currentVersion, assetIdentifier, alphaReleases, downloadTarBall, downloadZipBall, unzipFiles, unzipPath, launchPath, std::cout);
-        return upgrader.Upgrade();
+        std::cout << done.output;
+        return 0;
+    }
+    catch (const Error &error)
+    {
+        std::cerr << Json({{"status", "error"},
+                           {"code", static_cast<int>(error.code)},
+                           {"message", error.what()}})
+                         .dump()
+                  << '\n';
+        return 2 + static_cast<int>(error.code);
+    }
+    catch (const std::exception &error)
+    {
+        std::cerr << Json({{"status", "error"}, {"code", "invalidInput"}, {"message", error.what()}}).dump()
+                  << '\n';
+        return 2;
     }
 }

@@ -1,0 +1,26 @@
+services:
+  windows:
+    image: dockurr/windows@sha256:16fd7c39a3e48bb946d29c59dc6015942e5b900a1fa5d7e5552053bfc48ee2ea
+    environment:
+      NETWORK: user
+      RAM_SIZE: 8G
+      CPU_CORES: '4'
+      DISK_SIZE: 64G
+      DISK_FMT: qcow2
+      HOST: BazUpgradeE2E
+      USERNAME: BazUpgradeTest
+      PASSWORD: ${BAZUPGRADE_GUEST_PASSWORD:?Set an ephemeral test-only password}
+    devices:
+      - /dev/kvm
+    ports:
+      - 127.0.0.1:18006:8006
+    volumes:
+      - windows-data:/storage
+      - ${BAZUPGRADE_WINDOWS_ISO:?Set the verified Windows evaluation ISO path}:/custom.iso:ro
+      - ./oem:/oem:ro
+      - ${BAZUPGRADE_E2E_WORKSPACE:?Set a fresh synthetic workspace}:/shared
+    stop_grace_period: 2m
+volumes:
+  windows-data:
+    labels:
+      bazupgrade.e2e: 'true'
