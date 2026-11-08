@@ -1,8 +1,21 @@
+#include "curl/RepositoryTransport.hpp"
 #include "tests/TestSupport.hpp"
 namespace test
 {
 void EngineTests()
 {
+    Case("HTTP development transport remains loopback only",
+         []
+         {
+             CurlTransport secure("https://example.invalid/repository");
+             CurlTransport development("http://127.0.0.1:12345/repository", true);
+             Reject(ErrorCode::invalidInput, [] { CurlTransport transport("http://127.0.0.1/"); });
+             Reject(ErrorCode::invalidInput,
+                    [] { CurlTransport transport("http://example.invalid/", true); });
+             Reject(ErrorCode::invalidInput, [] { CurlTransport transport("ftp://127.0.0.1/", true); });
+             Reject(ErrorCode::invalidInput,
+                    [] { CurlTransport transport("https://user:synthetic@example.invalid/"); });
+         });
     Case("portable update activates an immutable version",
          []
          {

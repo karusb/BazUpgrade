@@ -1,5 +1,5 @@
 #include "curl/RepositoryTransport.hpp"
-#include "curl/Client.hpp"
+#include "curl/HttpClientCurl.hpp"
 #include <fstream>
 #include <memory>
 
@@ -80,9 +80,16 @@ curlwrapper::Response Perform(const std::string &base, const std::string &path, 
 {
     curlwrapper::Request request;
     request.url = base + EncodePath(path);
-    request.allowLoopbackHttp = http;
-    request.allowNotFound = file == nullptr;
-    request.maxBytes = limit;
+    request.options.emplace();
+    request.options->httpsOnly = !http;
+    request.options->followRedirects = false;
+    request.options->useEnvironmentProxy = false;
+    request.options->allowUrlCredentials = false;
+    request.options->maxBytes = limit;
+    request.options->connectTimeoutSeconds = 10;
+    request.options->timeoutSeconds = 300;
+    request.options->lowSpeedLimit = 1;
+    request.options->lowSpeedSeconds = 20;
     request.cancelled = [&cancel] { return cancel.requested.load(); };
     if (file)
         request.sink = [file](const char *bytes, std::size_t length)
@@ -92,7 +99,7 @@ curlwrapper::Response Perform(const std::string &base, const std::string &path, 
         };
     try
     {
-        return curlwrapper::Client().Perform(request);
+        return HTTPClientCurl().Perform(request);
     }
     catch (const curlwrapper::Error &error)
     {
@@ -107,8 +114,22 @@ CurlTransport::CurlTransport(std::string url, bool allowLoopbackHttp)
 {
     Require(!baseUrl.empty() && baseUrl.find_first_of("@?#\r\n") == std::string::npos,
             ErrorCode::invalidInput, "Invalid repository URL");
-    Require(baseUrl.rfind("https://", 0) == 0 || allowLoopbackHttp, ErrorCode::invalidInput,
-            "HTTPS is required");
+    CurlGlobalContext global;
+    std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> parsed(curl_url(), curl_url_cleanup);
+    Require(parsed && curl_url_set(parsed.get(), CURLUPART_URL, baseUrl.c_str(), 0) == CURLUE_OK,
+            ErrorCode::invalidInput, "Invalid repository URL");
+    auto part = [&](CURLUPart kind)
+    {
+        char *value = nullptr;
+        if (curl_url_get(parsed.get(), kind, &value, 0) != CURLUE_OK)
+            return std::string{};
+        std::unique_ptr<char, decltype(&curl_free)> storage(value, curl_free);
+        return std::string(value);
+    };
+    const auto scheme = part(CURLUPART_SCHEME), host = part(CURLUPART_HOST);
+    Require(scheme == "https" || (scheme == "http" && allowLoopbackHttp &&
+                                  (host == "localhost" || host == "127.0.0.1" || host == "[::1]")),
+            ErrorCode::invalidInput, "HTTPS is required; development HTTP is restricted to loopback");
     if (baseUrl.back() != '/')
         baseUrl += '/';
 }

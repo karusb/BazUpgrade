@@ -4,6 +4,8 @@ This records observed local checks for the v2 review changes. A configured workf
 
 The option-limit follow-up reran all 117 BazPO tests on Windows and Linux, plus the Windows CurlWrapper HTTP suite and BazUpgrade native/CLI/reference-TUF suites. The signing/reboot E2E and other platform results below describe the earlier v2 baseline; they were not rerun for this parser change.
 
+The CurlWrapper library follow-up restored the object-oriented HTTP interface and moved updater network policy into `CurlTransport`. CurlWrapper passed 24 GoogleTest unit tests and 8 loopback E2E cases on Windows and Linux, plus Linux address/undefined-behavior sanitizers with leak detection. Library-only build/install required no test dependencies, and an independent installed C++ consumer passed on Windows. BazUpgrade was rebuilt against that SDK and passed 36 native cases on Windows, 34 on Linux, and 9 CLI/reference-TUF integration tests on each. Hosted CI, macOS and native signing/reboot tests were not rerun for this library change.
+
 ## Build and behavior
 
 | Check | Observed result |
