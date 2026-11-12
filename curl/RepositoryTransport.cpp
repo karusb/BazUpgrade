@@ -1,5 +1,6 @@
 #include "curl/RepositoryTransport.hpp"
 #include "curl/HttpClientCurl.hpp"
+#include "interfaces/HttpUrl.hpp"
 #include <fstream>
 #include <memory>
 
@@ -54,9 +55,7 @@ void DirectoryTransport::Download(const std::string &path, const fs::path &desti
     Require(output.good(), ErrorCode::io, "Artifact write failed");
 }
 
-namespace
-{
-std::string EncodePath(const std::string &path)
+std::string CurlTransport::EncodePath(const std::string &path)
 {
     SafeRelative(path);
     static constexpr char digits[] = "0123456789ABCDEF";
@@ -75,13 +74,13 @@ std::string EncodePath(const std::string &path)
     }
     return result;
 }
-curlwrapper::Response Perform(const std::string &base, const std::string &path, bool http,
-                              std::uint64_t limit, const Cancellation &cancel, std::ofstream *file)
+curlwrapper::Response CurlTransport::Perform(const std::string &path, std::uint64_t limit,
+                                             const Cancellation &cancel, std::ofstream *file)
 {
     curlwrapper::Request request;
-    request.url = base + EncodePath(path);
+    request.url = baseUrl + EncodePath(path);
     request.options.emplace();
-    request.options->httpsOnly = !http;
+    request.options->httpsOnly = !loopbackHttp;
     request.options->followRedirects = false;
     request.options->useEnvironmentProxy = false;
     request.options->allowUrlCredentials = false;
@@ -99,7 +98,7 @@ curlwrapper::Response Perform(const std::string &base, const std::string &path, 
         };
     try
     {
-        return HTTPClientCurl().Perform(request);
+        return client->Perform(request);
     }
     catch (const curlwrapper::Error &error)
     {
@@ -108,35 +107,39 @@ curlwrapper::Response Perform(const std::string &base, const std::string &path, 
                     error.what());
     }
 }
-} // namespace
 CurlTransport::CurlTransport(std::string url, bool allowLoopbackHttp)
-    : baseUrl(std::move(url)), loopbackHttp(allowLoopbackHttp)
+    : CurlTransport(std::move(url), nullptr, allowLoopbackHttp)
 {
-    Require(!baseUrl.empty() && baseUrl.find_first_of("@?#\r\n") == std::string::npos,
-            ErrorCode::invalidInput, "Invalid repository URL");
-    CurlGlobalContext global;
-    std::unique_ptr<CURLU, decltype(&curl_url_cleanup)> parsed(curl_url(), curl_url_cleanup);
-    Require(parsed && curl_url_set(parsed.get(), CURLUPART_URL, baseUrl.c_str(), 0) == CURLUE_OK,
-            ErrorCode::invalidInput, "Invalid repository URL");
-    auto part = [&](CURLUPart kind)
+}
+CurlTransport::CurlTransport(std::string url, std::unique_ptr<HTTPClient> client, bool allowLoopbackHttp)
+    : baseUrl(std::move(url)), loopbackHttp(allowLoopbackHttp), client(std::move(client))
+{
+    try
     {
-        char *value = nullptr;
-        if (curl_url_get(parsed.get(), kind, &value, 0) != CURLUE_OK)
-            return std::string{};
-        std::unique_ptr<char, decltype(&curl_free)> storage(value, curl_free);
-        return std::string(value);
-    };
-    const auto scheme = part(CURLUPART_SCHEME), host = part(CURLUPART_HOST);
-    Require(scheme == "https" || (scheme == "http" && allowLoopbackHttp &&
-                                  (host == "localhost" || host == "127.0.0.1" || host == "[::1]")),
-            ErrorCode::invalidInput, "HTTPS is required; development HTTP is restricted to loopback");
+        const curlwrapper::HttpUrl repository(baseUrl);
+        Require(!repository.HasCredentials() && !repository.HasQuery() && !repository.HasFragment(),
+                ErrorCode::invalidInput, "Repository URLs cannot contain credentials, a query or a fragment");
+        Require(repository.Scheme() == "https" ||
+                    (allowLoopbackHttp && (repository.Host() == "localhost" ||
+                                           repository.Host() == "127.0.0.1" || repository.Host() == "::1")),
+                ErrorCode::invalidInput, "HTTPS is required; development HTTP is restricted to loopback");
+        if (!this->client)
+            this->client = std::make_unique<HTTPClientCurl>();
+    }
+    catch (const curlwrapper::Error &error)
+    {
+        throw Error(error.failure == curlwrapper::Failure::invalidInput ? ErrorCode::invalidInput
+                                                                        : ErrorCode::transport,
+                    error.what());
+    }
     if (baseUrl.back() != '/')
         baseUrl += '/';
 }
+CurlTransport::~CurlTransport() = default;
 std::optional<std::string> CurlTransport::Fetch(const std::string &path, std::uint64_t limit,
                                                 const Cancellation &cancel)
 {
-    auto response = Perform(baseUrl, path, loopbackHttp, limit, cancel, nullptr);
+    auto response = Perform(path, limit, cancel, nullptr);
     if (response.status == 404)
         return std::nullopt;
     Require(response.status == 200, ErrorCode::transport, "Metadata HTTP response was not 200");
@@ -149,7 +152,7 @@ void CurlTransport::Download(const std::string &path, const fs::path &destinatio
             "Download destination already exists");
     std::ofstream output(destination, std::ios::binary);
     Require(output.good(), ErrorCode::io, "Cannot create artifact file");
-    auto response = Perform(baseUrl, path, loopbackHttp, limit, cancel, &output);
+    auto response = Perform(path, limit, cancel, &output);
     Require(response.status == 200 && output.good(), ErrorCode::transport,
             "Artifact HTTP response was not 200");
     output.close();
