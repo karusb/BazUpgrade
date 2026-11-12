@@ -22,7 +22,7 @@ flowchart TB
 | controllers | Application policy, operation ownership, portable and native installation. |
 | tuf | Trusted metadata workflow and ordered delegation lookup. |
 | crypto | OpenSSL implementation and publisher signing helpers. |
-| curl | Repository transport adapting the separately maintained CurlWrapper library. |
+| curl | Repository path/status policy calling the independently installed HTTP client. |
 | storage | Process-held locks. |
 | publishing | Repository lifecycle, signed publication, and compatibility feeds. |
 | sdk | C ABI, public C++ include, and Node integration. |

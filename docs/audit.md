@@ -11,7 +11,7 @@ Not as a general trust and installation foundation. V1 provided useful separatio
 | Selection by release ordering and asset filename | A matching asset name is insufficient application or platform authorization | Exact logical target plus signed application, channel, platform, installer and sequence policy |
 | Download/unzip pipeline without a TUF trust workflow | Repository compromise and stale metadata were outside the client trust model | Threshold signatures, root rotation, expiration, metadata references and persisted versions |
 | Selected ZIP extraction into the working directory | Updating live application files lacks a separate activation and recovery boundary | Managed version directories, bounded extraction, explicit entrypoint and durable installation state |
-| A reusable CurlWrapper easy handle and retained request options | POST/GET/download behavior could inherit prior request state | Independent handles per request and behavior regressions |
+| A reusable CurlWrapper easy handle and retained request options | POST/GET/download behavior could inherit prior request state | Reset per-request options and borrowed pointers while retaining connections; behavior regressions |
 | Ignored curl_slist_append return value | Requested headers were not reliably retained | Owned header lists and allocation checks |
 | curl transport success without HTTP status validation | HTTP errors could be treated as successful requests | Typed HTTP errors and explicit optional metadata not-found handling |
 | No transfer deadlines or signed download size bound in the old facade | A server could hold an operation or consume unbounded resources | Connect/overall/low-speed limits and streaming size enforcement |

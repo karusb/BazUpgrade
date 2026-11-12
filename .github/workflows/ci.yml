@@ -22,5 +22,5 @@ jobs:
           node-version: '24'
       - name: Node SDK tests
         run: node --test sdk/node/test.mjs
-      - name: Explain private build boundary
-        run: echo 'C++ builds use build.yml from the private CurlWrapper repository. Fork checks never receive private source or credentials.'
+      - name: Explain dependency boundary
+        run: echo 'The manual C++ build consumes an authorized prebuilt SDK. Fork checks receive no private SDK credentials.'

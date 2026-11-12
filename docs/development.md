@@ -15,28 +15,32 @@ Release workflow preset: cmake --workflow --preset release. Windows CI uses the 
 
 Python test suites exercise CLI/C ABI, local HTTP and the official TUF client. BAZUPGRADE_REQUIRE_REFERENCE_TUF=1 makes missing interoperability support fail instead of skipping. Keys and applications are generated in isolated synthetic directories.
 
-## CI boundary
+## Independent builds
 
 ~~~mermaid
 flowchart LR
+  L[Private library build] --> S[Versioned CMake SDK artifact]
+  S --> B[Manual BazUpgrade build]
   P[Public BazUpgrade PR] --> C[Formatting and Node tests]
-  R[Private CurlWrapper manual build] --> W[Public reusable build.yml]
-  W --> D[Configure / Build / Test private SDK]
-  D --> B[Configure / Build / CTest BazUpgrade]
-  B --> I[Install / Compile consumer]
-  I --> A[CPack / Execute packaged tools / Probe C ABI]
-  A --> F[Private artifacts]
-  F --> M[Explicit release workflow]
-  M --> Q[Draft public release]
+  B --> T[Build / CTest / SDK consumer]
+  T --> A[CPack / Packaged tool and C ABI checks]
+  A --> F[BazUpgrade artifacts]
+  F --> R[BazUpgrade draft release]
 ~~~
 
-The public reusable workflow can run only in a private caller context. Private source never belongs in a public workflow checkout, log or artifact. The companion CurlWrapper bazupgrade.yml workflow invokes it using the caller's read-only GITHUB_TOKEN. All refs are immutable commit SHAs; only invoke reviewed code. Fork pull requests receive no private credentials.
+CurlWrapper owns its SDK build and tests. It contains no BazUpgrade workflow, configuration or documentation. BazUpgrade consumes an installed CMake SDK as an ordinary dependency; its build never checks out or builds the library's private implementation. The SDK's API headers are needed during the authorized build and are excluded from public packages and uploaded artifacts.
 
-Merge the reviewed manual entry workflows into their default branches before using their dispatch buttons. GitHub requires the workflow file on the default branch for workflow_dispatch; see [GitHub's trigger documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch). A feature-branch delivery does not silently merge or activate those workflows.
+Run the independent SDK build first. It produces a private `sdk-<OS>-<ARCH>-<attempt>` artifact for each platform, containing `CurlWrapper-SDK.zip`, a SHA-256 checksum and source identity. Then manually dispatch this repository's `build.yml` at a reviewed BazUpgrade ref with:
 
-The visible steps use the same CMake commands as local builds. There is no custom Python CI runner. The private CurlWrapper CMake CI also has separate configure/build/test/install steps.
+- `curlwrapper-sha`: the reviewed SDK source commit (40 hex digits).
+- `sdk-build-run`: the successful SDK producer run ID.
+- `sdk-build-attempt`: the exact producer attempt, normally `1`.
 
-No live Actions runs were requested for this change: CI credits were unavailable. Commits use [skip ci]. Local results are recorded separately from unexecuted runner configuration in [validation](validation.md).
+Configure `CURLWRAPPER_ARTIFACT_READ_TOKEN` as a fine-grained Actions-read token for the SDK producer repository. It is supplied only to the dependency download step. The action checks the producer workflow, event, conclusion, commit and attempt, then verifies the SDK platform/runner identity and ZIP checksum. Fork checks receive no token or private SDK. Do not dispatch a credential-bearing build for unreviewed code.
+
+The BazUpgrade workflow has visible configure/build/CTest, installed consumer, coverage, sanitizer and package verification steps. Its artifacts belong to this repository. CMake/Ninja come from the pinned native setup action; Python installs only interoperability and coverage test dependencies. The same CMake commands run locally; no custom Python CI runner is used.
+
+Workflow-dispatch entry points must be registered on the default branch before GitHub exposes their dispatch controls. Feature-branch delivery does not merge them or start a run. No hosted runs were requested because of the CI credit constraint; local results and unexecuted runner configuration are distinguished in [validation](validation.md).
 
 ## Coverage and sanitizers
 
@@ -56,12 +60,12 @@ Format project C++ with clang-format 18 and the committed style. See [Windows Do
 
 ## Release a reviewed commit
 
-1. Run the private BazUpgrade integration workflow for an exact reviewed BazUpgrade SHA and CurlWrapper SHA. Inspect all three platform results and package verification.
+1. Complete this repository's manual build for the exact BazUpgrade ref and reviewed prebuilt SDK. Inspect all three platform results and package verification.
 2. Complete the required native E2E and security review for the intended audience. Review [validation](validation.md) and [support](support.md).
 3. Create an immutable tag matching VERSION.txt at the tested BazUpgrade SHA.
-4. Manually run the public release workflow with that tag, SHA and the successful private integration run ID.
+4. Manually run `release.yml` with the tag, BazUpgrade SHA, successful BazUpgrade build run ID and its attempt number.
 5. Inspect and publish the resulting draft release.
 
-CURLWRAPPER_ARTIFACT_READ_TOKEN is a fine-grained read token for Actions artifacts in the private CurlWrapper repository. It is used only by the manual release workflow. The release checks run success, workflow path/event, source identity and all three platform artifacts, then uploads only release archives and SHA256SUMS.txt. Existing releases are never overwritten.
+The release workflow reads only this repository's artifacts with its own Actions-read `GITHUB_TOKEN`. It verifies the successful build event/workflow, exact commit, existing tag/version, consistent SDK source identity and all three platform packages. It uploads only release archives and SHA256SUMS.txt; SDK artifacts are not republished. Artifact names include run attempts to preserve prior attempts, and existing releases are never overwritten.
 
 Production code-signing, timestamps and macOS notarization need operator-managed identities. A temporary guest certificate is test evidence, not public CA signing or a security certification.

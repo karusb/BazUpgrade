@@ -8,8 +8,12 @@ on:
       bazupgrade-sha:
         description: Exact reviewed BazUpgrade commit
         required: true
-      private-build-run:
-        description: Successful private CurlWrapper bazupgrade.yml workflow_dispatch run ID
+      build-run:
+        description: Successful BazUpgrade build.yml workflow_dispatch run ID
+        required: true
+      build-attempt:
+        description: Validated BazUpgrade build attempt
+        default: '1'
         required: true
 permissions:
   contents: read
@@ -18,14 +22,19 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Validate release input
         env:
           SHA: ${{ inputs.bazupgrade-sha }}
-          RUN: ${{ inputs.private-build-run }}
+          RUN: ${{ inputs.build-run }}
+          BUILD_ATTEMPT: ${{ inputs.build-attempt }}
           TAG: ${{ inputs.tag }}
         run: |
-          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$RUN" =~ ^[0-9]+$ ]]
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RUN" =~ ^[1-9][0-9]*$ ]]
+          [[ "$BUILD_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -40,27 +49,36 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse "$TAG^{commit}")" = "$SHA"
           test "$TAG" = "v$(tr -d '\r\n' < VERSION.txt)"
-      - name: Download successful private build packages
+      - name: Download this repository's validated build packages
         env:
-          GH_TOKEN: ${{ secrets.CURLWRAPPER_ARTIFACT_READ_TOKEN }}
-          RUN: ${{ inputs.private-build-run }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ inputs.bazupgrade-sha }}
+          RUN: ${{ inputs.build-run }}
+          BUILD_ATTEMPT: ${{ inputs.build-attempt }}
         run: |
           set -euo pipefail
-          gh api "repos/karusb/CurlWrapper/actions/runs/$RUN" > run.json
-          jq -e '.status == "completed" and .conclusion == "success" and .event == "workflow_dispatch" and .path == ".github/workflows/bazupgrade.yml"' run.json >/dev/null
-          gh run download "$RUN" --repo karusb/CurlWrapper --pattern 'packages-*' --dir validated
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN/attempts/$BUILD_ATTEMPT" > run.json
+          jq -e --arg sha "$SHA" --arg repo "$GITHUB_REPOSITORY" '.status == "completed" and .conclusion == "success" and .event == "workflow_dispatch" and .path == ".github/workflows/build.yml" and .head_sha == $sha and .repository.full_name == $repo' run.json >/dev/null
+          gh run download "$RUN" --repo "$GITHUB_REPOSITORY" --pattern "packages-*-$BUILD_ATTEMPT" --dir validated
       - name: Verify source identity and platform completeness
         env:
           SHA: ${{ inputs.bazupgrade-sha }}
+          BUILD_ATTEMPT: ${{ inputs.build-attempt }}
         run: |
           set -euo pipefail
+          first="validated/packages-ubuntu-24.04-$BUILD_ATTEMPT/source.json"
+          curl_sha="$(jq -r '.curlwrapper' "$first")"
+          sdk_run="$(jq -r '.sdkRun' "$first")"
+          sdk_attempt="$(jq -r '.sdkAttempt' "$first")"
+          [[ "$curl_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$sdk_run" =~ ^[1-9][0-9]*$ ]]
+          [[ "$sdk_attempt" =~ ^[1-9][0-9]*$ ]]
           for platform in ubuntu-24.04 windows-2025 macos-15; do
-            identity="validated/packages-$platform/source.json"
+            identity="validated/packages-$platform-$BUILD_ATTEMPT/source.json"
             test -f "$identity"
             case "$platform" in ubuntu-*) os=Linux;; windows-*) os=Windows;; macos-*) os=macOS;; esac
-            curl_sha="$(jq -r '.head_sha' run.json)"
-            jq -e --arg sha "$SHA" --arg curl "$curl_sha" --arg os "$os" '.bazupgrade == $sha and .curlwrapper == $curl and .platform == $os' "$identity" >/dev/null
-            test "$(find "validated/packages-$platform" -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) | wc -l)" = 2
+            jq -e --arg sha "$SHA" --arg curl "$curl_sha" --arg run "$sdk_run" --arg attempt "$sdk_attempt" --arg os "$os" '.bazupgrade == $sha and .curlwrapper == $curl and .sdkRun == $run and .sdkAttempt == $attempt and .platform == $os' "$identity" >/dev/null
+            test "$(find "validated/packages-$platform-$BUILD_ATTEMPT" -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' \) | wc -l)" = 2
           done
       - name: Publish archives without replacing previous releases
         env:

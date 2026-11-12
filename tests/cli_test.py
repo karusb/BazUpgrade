@@ -126,6 +126,18 @@ class Integration(unittest.TestCase):
         self.save_config()
         self.assertEqual(self.client("apply")["status"], "updated")
 
+    def test_http_download_encodes_raw_target_path_segments(self):
+        target = "nested/a b\u03bb.zip"
+        self.publisher("publish", "--artifact", str(self.package), "--target", target,
+                       "--descriptor", str(self.release_file))
+        self.config["repository"] = self.server()
+        self.config["allowLoopbackHttp"] = True
+        self.config["target"] = target
+        self.save_config()
+        self.assertEqual(self.client("apply")["status"], "updated")
+        active = Path(self.client("status")["activePath"])
+        self.assertEqual(active.read_text(), "synthetic application\n")
+
     def test_c_abi_owns_output(self):
         library = ctypes.CDLL(SDK)
         library.baz_client_create.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p)]

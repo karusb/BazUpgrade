@@ -1,14 +1,9 @@
 #pragma once
 
 #include "interfaces/Transport.hpp"
-#include <iosfwd>
 #include <memory>
 
-class HTTPClient;
-namespace curlwrapper
-{
-struct Response;
-}
+class HTTPClientCurl;
 
 namespace baz
 {
@@ -30,7 +25,6 @@ class CurlTransport final : public Transport
 {
   public:
     explicit CurlTransport(std::string baseUrl, bool allowLoopbackHttp = false);
-    CurlTransport(std::string baseUrl, std::unique_ptr<HTTPClient> client, bool allowLoopbackHttp = false);
     ~CurlTransport() override;
     std::optional<std::string> Fetch(const std::string &path, std::uint64_t limit,
                                      const Cancellation &cancel) override;
@@ -38,11 +32,8 @@ class CurlTransport final : public Transport
                   const Cancellation &cancel) override;
 
   private:
-    static std::string EncodePath(const std::string &path);
-    curlwrapper::Response Perform(const std::string &path, std::uint64_t limit, const Cancellation &cancel,
-                                  std::ofstream *file);
+    std::string ResolveUrl(const std::string &path) const;
     std::string baseUrl;
-    bool loopbackHttp;
-    std::unique_ptr<HTTPClient> client;
+    std::unique_ptr<HTTPClientCurl> client;
 };
 } // namespace baz

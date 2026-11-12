@@ -4,10 +4,10 @@
 
 ## Choose your integration
 
-| Path | Needs private CurlWrapper source access? |
+| Path | Needs an authorized CurlWrapper SDK? |
 |---|---|
 | Packaged CLI or shared C ABI SDK | No. Compatible runtime libraries may still be needed on Linux/macOS. |
-| Build BazUpgrade or link the static C++ SDK | Yes: obtain an authorized CurlWrapper 2 CMake SDK installation. |
+| Build BazUpgrade or link the static C++ SDK | Yes. An installed prebuilt SDK is sufficient; source checkout is optional. |
 | Host a signed repository | Only the publisher binary and protected signing state are required. |
 
 BazUpgrade is public; CurlWrapper remains private. Apache-2.0 for BazUpgrade does not grant access to that dependency. Public source builds are not self-contained. There is no credential-bearing submodule, vendored private snapshot, or automatic private clone.
@@ -20,7 +20,9 @@ Use maintained security-patched packages. API minimums do not imply an old unpat
 
 ## 1. Install the private CMake SDK
 
-Clone CurlWrapper using your own authorized access, outside the public project. No credentials belong in CMake, Docker images or repository files.
+Use an authorized prebuilt CurlWrapper SDK archive, or build it separately using your own source access. Extract the SDK into a dependency prefix and set `BAZUPGRADE_DEPENDENCY_PREFIX` to that prefix. CMake consumes the installed `CurlWrapper::CurlWrapper` target; BazUpgrade never checks out or builds the private implementation.
+
+For a source-built SDK, keep the checkout outside this project. No credentials belong in CMake, Docker images or repository files.
 
 ~~~sh
 cmake -S /path/to/CurlWrapper -B /path/to/dependencies/curl-build \
@@ -31,7 +33,7 @@ cmake --install /path/to/dependencies/curl-build --config Release
 export BAZUPGRADE_DEPENDENCY_PREFIX=/path/to/dependencies/installed
 ~~~
 
-Install curl development libraries first. CurlWrapper's HTTP regression tests use BazPO; that public dependency is pinned by commit.
+Install curl development libraries first. CurlWrapper's unit tests use GoogleTest; production library builds require neither GoogleTest nor BazPO. Python is needed only when its optional loopback E2E suite is enabled.
 
 ## 2. Build BazUpgrade
 

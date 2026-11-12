@@ -6,7 +6,7 @@
 | curl 7.85+ | HTTPS | System package or pinned vcpkg baseline |
 | libarchive | ZIP/TAR | System package or pinned vcpkg baseline |
 | nlohmann/json 3.12.0 | JSON model | Installed package or SHA-256 pinned public archive |
-| CurlWrapper 2 | Isolated requests, limits and cancellation | Installed private CMake SDK only |
+| CurlWrapper 2 | Reusable HTTP client, bounded transfers, streams and cancellation | Installed private CMake SDK only |
 | BazPO 0.3 | Every C++ executable's options | Installed package or immutable public commit |
 | Python / official python-tuf | CLI/C ABI/HTTP and interoperability tests | requirements-tests.txt |
 | Node 20+ | Optional Node/Electron SDK | No runtime npm dependencies |
@@ -14,7 +14,7 @@
 
 CurlWrapper remains private. BazUpgrade never fetches its private source or distributes its private headers. Building from source and using the static C++ SDK require authorized access to that SDK. Distributed binaries and the shared C ABI are separate integration paths.
 
-The full C++ workflow runs inside a private caller repository. Public fork checks only run on public source, without private credentials. Read [development](development.md) before changing this boundary.
+The manual C++ workflow runs in BazUpgrade and consumes an independently built, authorized SDK artifact. It validates the producer commit, run attempt, platform and archive checksum before installation. CurlWrapper builds only its own SDK and does not invoke a consumer workflow. Public fork checks run without private SDK credentials. Read [development](development.md) for setup and release provenance.
 
 BazPO supplies parsing, generated help and option constraints. Scalar tool options use `withMaxValueCount(1)` to reject repeated tags, including aliases. The tools require an explicit value for each provided scalar option before update or publishing operations. BazPO retains raw values, optional values and custom tag syntax; it also owns defaults and supports header-only linkage across translation units.
 

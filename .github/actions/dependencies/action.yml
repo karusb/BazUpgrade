@@ -1,8 +1,20 @@
-name: Private CMake dependency
-description: Build, test and install the separately checked out private CurlWrapper SDK.
+name: CMake build dependencies
+description: Install platform dependencies and consume a reviewed prebuilt CMake SDK.
 inputs:
-  source:
-    description: Checked out CurlWrapper source directory
+  sdk-sha:
+    description: Reviewed immutable SDK source commit
+    required: true
+  sdk-run:
+    description: Successful SDK producer run ID
+    required: true
+  sdk-attempt:
+    description: Exact SDK producer run attempt
+    required: true
+  runner-image:
+    description: Expected runner image label
+    required: true
+  sdk-token:
+    description: Read-only Actions token for the private SDK producer
     required: true
 runs:
   using: composite
@@ -10,9 +22,17 @@ runs:
     - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
       with:
         python-version: '3.12'
-    - name: Install build and interoperability tools
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      with:
+        node-version: '24'
+    - name: Build tools
+      uses: lukka/get-cmake@fffaaafeea488556c2c12dad60690008bc1caacb # v4.4.2
+      with:
+        cmakeVersion: 3.31.6
+        ninjaVersion: 1.12.1
+    - name: Interoperability test dependency
       shell: bash
-      run: python -m pip install cmake==3.31.6 ninja==1.11.1.4 -r bazupgrade/requirements-tests.txt
+      run: python -m pip install -r bazupgrade/requirements-tests.txt
     - name: Linux dependencies
       if: runner.os == 'Linux'
       shell: bash
@@ -40,25 +60,60 @@ runs:
       if: runner.os == 'Windows'
       shell: pwsh
       run: ./vcpkg/bootstrap-vcpkg.bat -disableMetrics
-    - name: Configure private CurlWrapper
+    - name: Download reviewed SDK artifact
       shell: bash
       env:
-        CURL_SOURCE: ${{ inputs.source }}
+        GH_TOKEN: ${{ inputs.sdk-token }}
+        SDK_RUN: ${{ inputs.sdk-run }}
+        SDK_ATTEMPT: ${{ inputs.sdk-attempt }}
+        SDK_SHA: ${{ inputs.sdk-sha }}
       run: |
         set -euo pipefail
-        args=(-DCMAKE_BUILD_TYPE=Release "-DCMAKE_INSTALL_PREFIX=$BAZUPGRADE_DEPENDENCY_PREFIX")
-        if [[ "$RUNNER_OS" == "Windows" ]]; then
-          args+=(-G "Visual Studio 17 2022" -A x64 "-DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" "-DVCPKG_INSTALLED_DIR=$BAZUPGRADE_VCPKG_INSTALLED_DIR" -DVCPKG_TARGET_TRIPLET=x64-windows-static '-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded$<$<CONFIG:Debug>:Debug>')
-        else
-          args+=(-G Ninja)
-        fi
-        cmake -S "$CURL_SOURCE" -B dependencies/build "${args[@]}"
-    - name: Build private CurlWrapper
+        [[ "$SDK_SHA" =~ ^[0-9a-f]{40}$ ]]
+        [[ "$SDK_RUN" =~ ^[1-9][0-9]*$ ]]
+        [[ "$SDK_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+        test -n "$GH_TOKEN"
+        mkdir -p dependencies/sdk-download
+        gh api "repos/karusb/CurlWrapper/actions/runs/$SDK_RUN/attempts/$SDK_ATTEMPT" > dependencies/sdk-download/run.json
+        node <<'JS'
+        const assert = require("node:assert/strict");
+        const run = require("./dependencies/sdk-download/run.json");
+        assert.equal(run.status, "completed", "SDK build has not completed");
+        assert.equal(run.conclusion, "success", "SDK build did not pass");
+        assert.ok(["push", "workflow_dispatch"].includes(run.event), "Untrusted SDK build event");
+        assert.equal(run.path, ".github/workflows/build.yml", "Unexpected SDK producer workflow");
+        assert.equal(run.head_sha, process.env.SDK_SHA, "SDK source commit differs from the reviewed ref");
+        assert.equal(String(run.id), process.env.SDK_RUN, "SDK run identity differs");
+        assert.equal(String(run.run_attempt), process.env.SDK_ATTEMPT, "SDK run attempt differs");
+        JS
+        gh run download "$SDK_RUN" --repo karusb/CurlWrapper --name "sdk-$RUNNER_OS-$RUNNER_ARCH-$SDK_ATTEMPT" --dir dependencies/sdk-download
+    - name: Verify and install SDK
       shell: bash
-      run: cmake --build dependencies/build --config Release --parallel 4
-    - name: Test private CurlWrapper
-      shell: bash
-      run: ctest --test-dir dependencies/build -C Release --output-on-failure
-    - name: Install private CurlWrapper SDK
-      shell: bash
-      run: cmake --install dependencies/build --config Release
+      env:
+        SDK_RUN: ${{ inputs.sdk-run }}
+        SDK_ATTEMPT: ${{ inputs.sdk-attempt }}
+        SDK_SHA: ${{ inputs.sdk-sha }}
+        EXPECTED_RUNNER: ${{ inputs.runner-image }}
+      run: |
+        set -euo pipefail
+        node <<'JS'
+        const assert = require("node:assert/strict");
+        const fs = require("node:fs");
+        const crypto = require("node:crypto");
+        const directory = "dependencies/sdk-download/";
+        const identity = JSON.parse(fs.readFileSync(directory + "source.json", "utf8"));
+        assert.equal(identity.project, "CurlWrapper", "Unexpected SDK package");
+        assert.equal(identity.commit, process.env.SDK_SHA, "SDK source commit differs");
+        assert.equal(identity.run, process.env.SDK_RUN, "SDK producer run differs");
+        assert.equal(identity.attempt, process.env.SDK_ATTEMPT, "SDK producer attempt differs");
+        assert.equal(identity.os, process.env.RUNNER_OS, "SDK operating system differs");
+        assert.equal(identity.arch, process.env.RUNNER_ARCH, "SDK architecture differs");
+        assert.equal(identity.runner, process.env.EXPECTED_RUNNER, "SDK runner image differs");
+        const expectedHash = fs.readFileSync(directory + "SHA256SUMS.txt", "utf8").trim().split(/\s+/)[0];
+        assert.match(expectedHash, /^[0-9a-f]{64}$/, "Invalid SDK checksum");
+        const archive = fs.readFileSync(directory + "CurlWrapper-SDK.zip");
+        assert.equal(crypto.createHash("sha256").update(archive).digest("hex"), expectedHash,
+                     "SDK archive checksum differs");
+        JS
+        cmake -E make_directory "$BAZUPGRADE_DEPENDENCY_PREFIX"
+        cmake -E chdir "$BAZUPGRADE_DEPENDENCY_PREFIX" cmake -E tar xf "$GITHUB_WORKSPACE/dependencies/sdk-download/CurlWrapper-SDK.zip"

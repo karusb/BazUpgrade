@@ -1,15 +1,19 @@
 name: Build, test and package
 on:
-  workflow_call:
+  workflow_dispatch:
     inputs:
-      bazupgrade-ref:
+      curlwrapper-sha:
+        description: Reviewed immutable CurlWrapper SDK source commit
         type: string
         required: true
-      curlwrapper-ref:
+      sdk-build-run:
+        description: Successful independent CurlWrapper SDK build run ID
         type: string
         required: true
-    secrets:
-      CURLWRAPPER_READ_TOKEN:
+      sdk-build-attempt:
+        description: SDK build attempt to consume
+        type: string
+        default: '1'
         required: true
 permissions:
   contents: read
@@ -28,30 +32,27 @@ jobs:
       - name: Validate immutable input references
         shell: bash
         env:
-          BAZ_REF: ${{ inputs.bazupgrade-ref }}
-          CURL_REF: ${{ inputs.curlwrapper-ref }}
-          PRIVATE_CALLER: ${{ github.event.repository.private }}
+          CURL_REF: ${{ inputs.curlwrapper-sha }}
+          SDK_RUN: ${{ inputs.sdk-build-run }}
+          SDK_ATTEMPT: ${{ inputs.sdk-build-attempt }}
         run: |
-          test "$PRIVATE_CALLER" = true
-          [[ "$BAZ_REF" =~ ^[0-9a-f]{40}$ ]] && [[ "$CURL_REF" =~ ^[0-9a-f]{40}$ ]]
+          set -euo pipefail
+          [[ "$CURL_REF" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SDK_RUN" =~ ^[1-9][0-9]*$ ]]
+          [[ "$SDK_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
       - name: Checkout public BazUpgrade
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: karusb/BazUpgrade
-          ref: ${{ inputs.bazupgrade-ref }}
           path: bazupgrade
           persist-credentials: false
-      - name: Checkout private CurlWrapper
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Install build dependencies and the reviewed SDK
+        uses: ./bazupgrade/.github/actions/dependencies
         with:
-          repository: karusb/CurlWrapper
-          ref: ${{ inputs.curlwrapper-ref }}
-          token: ${{ secrets.CURLWRAPPER_READ_TOKEN }}
-          path: curlwrapper
-          persist-credentials: false
-      - uses: ./bazupgrade/.github/actions/dependencies
-        with:
-          source: curlwrapper
+          sdk-sha: ${{ inputs.curlwrapper-sha }}
+          sdk-run: ${{ inputs.sdk-build-run }}
+          sdk-attempt: ${{ inputs.sdk-build-attempt }}
+          runner-image: ${{ matrix.os }}
+          sdk-token: ${{ secrets.CURLWRAPPER_ARTIFACT_READ_TOKEN }}
       - name: Select CMake preset
         shell: bash
         run: |
@@ -67,9 +68,6 @@ jobs:
       - name: C++ / CLI / C ABI / reference TUF tests
         working-directory: bazupgrade
         run: ctest --preset ${{ env.BUILD_PRESET }}
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
-        with:
-          node-version: '24'
       - name: Node SDK tests
         working-directory: bazupgrade
         run: node --test sdk/node/test.mjs
@@ -93,10 +91,12 @@ jobs:
       - name: Record release source identity
         shell: bash
         env:
-          BAZ_REF: ${{ inputs.bazupgrade-ref }}
-          CURL_REF: ${{ inputs.curlwrapper-ref }}
+          BAZ_REF: ${{ github.sha }}
+          CURL_REF: ${{ inputs.curlwrapper-sha }}
+          SDK_RUN: ${{ inputs.sdk-build-run }}
+          SDK_ATTEMPT: ${{ inputs.sdk-build-attempt }}
         run: |
-          printf '{"bazupgrade":"%s","curlwrapper":"%s","platform":"%s"}\n' "$BAZ_REF" "$CURL_REF" "$RUNNER_OS" > bazupgrade/out/packages/source.json
+          printf '{"bazupgrade":"%s","curlwrapper":"%s","sdkRun":"%s","sdkAttempt":"%s","platform":"%s"}\n' "$BAZ_REF" "$CURL_REF" "$SDK_RUN" "$SDK_ATTEMPT" "$RUNNER_OS" > bazupgrade/out/packages/source.json
       - name: Install Linux analysis tools
         if: runner.os == 'Linux'
         run: python -m pip install gcovr==8.4
@@ -131,11 +131,11 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: runner.os == 'Linux'
         with:
-          name: coverage
+          name: coverage-${{ github.run_attempt }}
           path: bazupgrade/out/coverage/summary.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: packages-${{ matrix.os }}
+          name: packages-${{ matrix.os }}-${{ github.run_attempt }}
           path: |
             bazupgrade/out/packages/*.zip
             bazupgrade/out/packages/*.tar.gz
