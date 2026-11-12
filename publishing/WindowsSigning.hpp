@@ -1,5 +1,6 @@
 #pragma once
 #include "util/Json.hpp"
+
 namespace baz
 {
 Json CreateTestCertificate(const fs::path &publicCertificate);

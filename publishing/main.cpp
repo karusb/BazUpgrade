@@ -4,6 +4,7 @@
 #include "publishing/WindowsSigning.hpp"
 #include "util/ToolCli.hpp"
 #include <iostream>
+
 int main(int argc, const char *argv[])
 {
     using namespace baz;

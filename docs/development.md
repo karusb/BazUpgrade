@@ -58,6 +58,8 @@ Loading an ASan SDK into an unrelated Python process requires matching runtime s
 
 Format project C++ with clang-format 18 and the committed style. See [Windows Docker E2E](../e2e/windows/README.md) for privileged tests inside a disposable guest.
 
+Use action names that describe the operation at the call site. Keep declarations, validation, state changes and result handling in logical groups separated by blank lines. The formatter enforces separation between function definitions; group the steps inside each function by responsibility.
+
 ## Release a reviewed commit
 
 1. Complete this repository's manual build for the exact BazUpgrade ref and reviewed prebuilt SDK. Inspect all three platform results and package verification.

@@ -2,12 +2,14 @@
 #include "util/Json.hpp"
 #include <BazPO.hpp>
 #include <sstream>
+
 namespace baz
 {
 struct CliExit
 {
     std::string output;
 };
+
 class ToolCli final : public BazPO::Cli
 {
   public:
@@ -15,6 +17,7 @@ class ToolCli final : public BazPO::Cli
     {
         changeIO(&diagnostics);
     }
+
     std::string Help()
     {
         diagnostics.str("");
@@ -29,8 +32,10 @@ class ToolCli final : public BazPO::Cli
             throw CliExit{Help()};
         throw Error(ErrorCode::invalidInput, diagnostics.str());
     }
+
     std::ostringstream diagnostics;
 };
+
 inline std::string Required(const BazPO::Option &option)
 {
     Require(option.exists() && !option.valueAs<std::string>().empty(), ErrorCode::invalidInput,

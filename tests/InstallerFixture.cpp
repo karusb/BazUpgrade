@@ -1,5 +1,6 @@
 #include <BazPO.hpp>
 #include <iostream>
+
 int main(int argc, const char *argv[])
 {
     BazPO::Cli cli(argc, argv, "Synthetic NSIS process contract; never installs a package");

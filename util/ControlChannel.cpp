@@ -71,6 +71,7 @@ ControlChannel::ControlChannel(Cancellation &cancellation, bool enabled)
             }
         });
 }
+
 ControlChannel::~ControlChannel()
 {
     stopping = true;

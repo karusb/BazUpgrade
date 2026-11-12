@@ -19,12 +19,13 @@ permissions:
   contents: read
 jobs:
   build:
-    name: C++ / ${{ matrix.os }}
+    name: Build, test and package (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
+        # Native packages and their linked SDKs must match the target platform.
         os: [ubuntu-24.04, windows-2025, macos-15]
     env:
       BAZUPGRADE_REQUIRE_REFERENCE_TUF: '1'

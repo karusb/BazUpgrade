@@ -13,6 +13,7 @@ struct Library
 {
 #ifdef _WIN32
     HMODULE handle = nullptr;
+
     ~Library()
     {
         if (handle)
@@ -20,6 +21,7 @@ struct Library
     }
 #else
     void *handle = nullptr;
+
     ~Library()
     {
         if (handle)
@@ -28,6 +30,7 @@ struct Library
 #endif
 };
 } // namespace
+
 int main(int argc, const char *argv[])
 {
     try

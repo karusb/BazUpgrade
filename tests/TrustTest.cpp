@@ -37,9 +37,9 @@ void TrustTests()
              fixture.Publish();
              DirectoryTransport transport(fixture.repo);
              TufClient client(transport, fixture.crypto, fixture.bootstrap, fixture.root / "trust");
-             auto target = client.Resolve(fixture.config.target, fixture.cancel);
+             auto target = client.ResolveTarget(fixture.config.target, fixture.cancel);
              Check(target.custom.at("releaseSequence") == 1, "Wrong release");
-             client.Download(target, fixture.root / "download.zip", fixture.cancel);
+             client.DownloadAndVerifyTarget(target, fixture.root / "download.zip", fixture.cancel);
              Check(fixture.crypto.HashFile(fixture.root / "download.zip") ==
                        fixture.crypto.HashFile(fixture.package),
                    "Downloaded bytes changed");
@@ -78,7 +78,7 @@ void TrustTests()
              timestamp["expires"] = "2000-01-01T00:00:00Z";
              fixture.Resign("timestamp.json", timestamp, "timestamp");
              UpdateClient client(fixture.config);
-             Reject(ErrorCode::expired, [&] { client.Check(fixture.cancel); });
+             Reject(ErrorCode::expired, [&] { client.CheckForUpdate(fixture.cancel); });
          });
     Case("metadata version rollback survives a new client",
          []
@@ -86,31 +86,33 @@ void TrustTests()
              Fixture fixture;
              fixture.Publish();
              auto old = ReadJson(fixture.repo / "metadata/timestamp.json");
-             UpdateClient(fixture.config).Check(fixture.cancel);
+             UpdateClient(fixture.config).CheckForUpdate(fixture.cancel);
              fixture.Publish(2);
-             UpdateClient(fixture.config).Check(fixture.cancel);
+             UpdateClient(fixture.config).CheckForUpdate(fixture.cancel);
              WriteJson(fixture.repo / "metadata/timestamp.json", old);
-             Reject(ErrorCode::rollback, [&] { UpdateClient(fixture.config).Check(fixture.cancel); });
+             Reject(ErrorCode::rollback,
+                    [&] { UpdateClient(fixture.config).CheckForUpdate(fixture.cancel); });
          });
     Case("metadata cannot change at the same version",
          []
          {
              Fixture fixture;
              fixture.Publish();
-             UpdateClient(fixture.config).Check(fixture.cancel);
+             UpdateClient(fixture.config).CheckForUpdate(fixture.cancel);
              auto timestamp = ReadJson(fixture.repo / "metadata/timestamp.json").at("signed");
              timestamp["expires"] = "2099-01-01T00:00:00Z";
              fixture.Resign("timestamp.json", timestamp, "timestamp");
-             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).Check(fixture.cancel); });
+             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).CheckForUpdate(fixture.cancel); });
          });
     Case("root rotation works from the original bootstrap",
          []
          {
              Fixture fixture;
              fixture.Publish();
-             UpdateClient(fixture.config).Check(fixture.cancel);
+             UpdateClient(fixture.config).CheckForUpdate(fixture.cancel);
              RepositoryPublisher(fixture.repo, fixture.keys).RotateRoot();
-             Check(UpdateClient(fixture.config).Check(fixture.cancel).at("status") == "updateAvailable",
+             Check(UpdateClient(fixture.config).CheckForUpdate(fixture.cancel).at("status") ==
+                       "updateAvailable",
                    "Rotation lost target");
              Check(ReadJson(fixture.config.stateDirectory / "trust/root.json").at("signed").at("version") ==
                        2,
@@ -130,7 +132,7 @@ void TrustTests()
              auto bytes = ReadFile(path);
              bytes[0] ^= 1;
              Bytes(path, bytes);
-             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).Apply(fixture.cancel); });
+             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).ApplyUpdate(fixture.cancel); });
              Check(!fs::exists(fixture.config.installDirectory / "versions"),
                    "Unverified archive was extracted");
          });
@@ -138,7 +140,7 @@ void TrustTests()
          []
          {
              Fixture fixture;
-             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).Check(fixture.cancel); });
+             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).CheckForUpdate(fixture.cancel); });
          });
     Case("delegated role cache cannot alias the trusted root",
          []
@@ -147,12 +149,12 @@ void TrustTests()
              fixture.Publish();
              fixture.Delegate("ROOT", "ex[a-z]mple.?ip", false, true);
              auto original = ReadJson(fixture.bootstrap);
-             UpdateClient(fixture.config).Check(fixture.cancel);
+             UpdateClient(fixture.config).CheckForUpdate(fixture.cancel);
              auto trust = fixture.config.stateDirectory / "trust";
              Check(ReadJson(trust / "root.json") == original, "Delegation replaced trust root");
              Check(fs::exists(trust / "delegated" / (fixture.crypto.Hash("ROOT") + ".json")),
                    "Delegated cache is not isolated");
-             UpdateClient(fixture.config).Check(fixture.cancel);
+             UpdateClient(fixture.config).CheckForUpdate(fixture.cancel);
          });
     Case("terminating bracket delegation stops later roles",
          []
@@ -161,7 +163,7 @@ void TrustTests()
              fixture.Publish();
              fixture.Delegate("first", "ex[!0-9]mple.*", true, false);
              fixture.Delegate("later", "*", false, false);
-             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).Check(fixture.cancel); });
+             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).CheckForUpdate(fixture.cancel); });
              Check(!fs::exists(fixture.config.stateDirectory / "trust/delegated" /
                                (fixture.crypto.Hash("later") + ".json")),
                    "Terminated traversal visited a later role");
@@ -192,7 +194,7 @@ void TrustTests()
              Check(ReadJson(fixture.keys / "publication.json") == checkpoint,
                    "Rejected replay changed signing state");
              RepositoryPublisher(fixture.repo, fixture.keys).RestoreMetadata();
-             Check(UpdateClient(fixture.config).Check(fixture.cancel).at("releaseSequence") == 2,
+             Check(UpdateClient(fixture.config).CheckForUpdate(fixture.cancel).at("releaseSequence") == 2,
                    "Restoration lost the latest release");
          });
 #ifdef _WIN32

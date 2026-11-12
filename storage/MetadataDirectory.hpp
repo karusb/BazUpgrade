@@ -1,6 +1,7 @@
 #pragma once
 #include "util/Json.hpp"
 #include <memory>
+
 namespace baz
 {
 // An anchored metadata directory. No metadata I/O follows repository symlinks.

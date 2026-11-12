@@ -2,6 +2,7 @@
 #include <chrono>
 #include <thread>
 #include <windows.h>
+
 namespace baz
 {
 namespace
@@ -29,19 +30,23 @@ std::wstring QuoteArgument(const std::wstring &input)
     return output + L'"';
 }
 } // namespace
+
 int RunWindowsProcess(const std::wstring &executable, const std::vector<std::wstring> &arguments,
                       const fs::path &logPath)
 {
     Require(!fs::is_symlink(fs::symlink_status(logPath)), ErrorCode::io, "Unsafe installer log path");
+
     struct Handle
     {
         HANDLE value;
+
         ~Handle()
         {
             if (value != INVALID_HANDLE_VALUE && value)
                 CloseHandle(value);
         }
     };
+
     SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     Handle log{CreateFileW(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &security, CREATE_ALWAYS,
                            FILE_ATTRIBUTE_NORMAL, nullptr)};
@@ -55,14 +60,17 @@ int RunWindowsProcess(const std::wstring &executable, const std::vector<std::wst
     auto attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
     Require(InitializeProcThreadAttributeList(attributes, 1, 0, &size), ErrorCode::io,
             "Cannot prepare installer process");
+
     struct AttributeGuard
     {
         LPPROC_THREAD_ATTRIBUTE_LIST value;
+
         ~AttributeGuard()
         {
             DeleteProcThreadAttributeList(value);
         }
     } guard{attributes};
+
     HANDLE handles[] = {log.value, input.value};
     Require(UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, handles,
                                       sizeof(handles), nullptr, nullptr),

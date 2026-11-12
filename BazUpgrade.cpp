@@ -5,14 +5,17 @@
 #include "util/ToolCli.hpp"
 #include <csignal>
 #include <iostream>
+
 namespace
 {
 baz::Cancellation cancellation;
+
 extern "C" void Cancel(int)
 {
     cancellation.requested.store(true);
 }
 } // namespace
+
 int main(int argc, const char *argv[])
 {
     using namespace baz;
@@ -75,22 +78,22 @@ int main(int argc, const char *argv[])
         UpdateClient client(ClientConfig::Load(fs::u8path(configuration)));
         Json result;
         if (action == "check")
-            result = client.Check(cancellation);
+            result = client.CheckForUpdate(cancellation);
         else if (action == "apply")
         {
             std::function<void()> ready;
             if (notify.exists())
                 ready = [] { std::cout << "{\"event\":\"ready\"}" << std::endl; };
-            result = client.Apply(cancellation, ProcessId(pid.valueAs<std::string>()), ready);
+            result = client.ApplyUpdate(cancellation, ProcessId(pid.valueAs<std::string>()), ready);
         }
         else if (action == "status")
-            result = client.Status();
+            result = client.ReadInstallationState();
         else if (action == "rollback")
-            result = client.Rollback();
+            result = client.RollbackPortableInstallation();
         else if (action == "reconcile")
-            result = client.Reconcile(installed.valueAs<std::string>() == "true");
+            result = client.ReconcileInstallationOutcome(installed.valueAs<std::string>() == "true");
         else
-            result = client.VerifyFile(fs::u8path(file.valueAs<std::string>()), cancellation);
+            result = client.VerifyDownloadedFile(fs::u8path(file.valueAs<std::string>()), cancellation);
         std::cout << result.dump() << '\n';
         return 0;
     }

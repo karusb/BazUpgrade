@@ -1,6 +1,7 @@
 #pragma once
 #include "util/Json.hpp"
 #include <vector>
+
 namespace baz
 {
 #ifdef _WIN32

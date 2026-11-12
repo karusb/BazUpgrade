@@ -1,5 +1,6 @@
 #pragma once
 #include "util/Json.hpp"
+
 namespace baz
 {
 class RepositoryPublisher
@@ -15,10 +16,12 @@ class RepositoryPublisher
     Json ExportAppInstaller(const std::string &target, const std::string &baseUrl, const fs::path &output);
 
   private:
-    Json ReadSigned(const std::string &role);
+    Json ReadSignedMetadata(const std::string &role);
     Json CommitTargets(Json body);
     void WriteOnlineMetadata(const Json &checkpoint);
-    std::vector<fs::path> RoleKeys(const Json &ring, const std::string &role) const;
-    fs::path repository, keys;
+    std::vector<fs::path> GetRoleSigningKeys(const Json &ring, const std::string &role) const;
+
+    fs::path repository;
+    fs::path keys;
 };
 } // namespace baz

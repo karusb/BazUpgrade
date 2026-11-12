@@ -1,6 +1,7 @@
 #pragma once
 #include "interfaces/Transport.hpp"
 #include <thread>
+
 namespace baz
 {
 // Cooperative stdin control avoids Windows TerminateProcess-style signal cancellation.

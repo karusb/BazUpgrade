@@ -4,3 +4,4 @@ ColumnLimit: 110
 BreakBeforeBraces: Allman
 NamespaceIndentation: None
 SortIncludes: true
+SeparateDefinitionBlocks: Always

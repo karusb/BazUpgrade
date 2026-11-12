@@ -1,9 +1,11 @@
 #include "tests/TestSupport.hpp"
 #include <BazPO.hpp>
+
 namespace test
 {
 unsigned passed = 0, failed = 0;
 }
+
 int main(int argc, const char *argv[])
 {
     BazPO::Cli cli(argc, argv, "BazUpgrade native behavior regressions");

@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/karusb/BazUpgrade/actions/workflows/ci.yml"><img alt="Public checks" src="https://github.com/karusb/BazUpgrade/actions/workflows/ci.yml/badge.svg?branch=feat%2Ftuf-update-platform"></a>
+  <a href="https://github.com/karusb/BazUpgrade/actions/workflows/ci.yml"><img alt="Public checks" src="https://github.com/karusb/BazUpgrade/actions/workflows/ci.yml/badge.svg?branch=feat%2Ftuf-platform-sdk"></a>
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-8c9dff">
   <a href="LICENSE"><img alt="Apache 2.0 license" src="https://img.shields.io/badge/license-Apache--2.0-49e0c1"></a>
   <img alt="Release candidate" src="https://img.shields.io/badge/status-v2%20release%20candidate-e9bc6a">
@@ -99,7 +99,7 @@ The publisher also provides metadata refresh, root-key rotation, protected publi
 
 baz::UpdateClient updater(baz::ClientConfig::Load("client.json"));
 baz::Cancellation cancellation;
-auto available = updater.Check(cancellation);
+auto available = updater.CheckForUpdate(cancellation);
 // Save application state and arrange shutdown before applying a self-update.
 ~~~
 

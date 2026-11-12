@@ -25,6 +25,7 @@ class Error : public std::runtime_error
     Error(ErrorCode code, const std::string &message) : std::runtime_error(message), code(code)
     {
     }
+
     ErrorCode code;
 };
 

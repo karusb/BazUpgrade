@@ -12,7 +12,9 @@ ClientConfig ClientConfig::Load(const fs::path &path)
 {
     auto json = ReadJson(path);
     ClientConfig value;
+
     Require(json.at("schemaVersion") == 1, ErrorCode::unsupported, "Unsupported client configuration");
+
     value.repository = json.at("repository");
     value.appId = Component(json.at("appId"));
     value.channel = Component(json.at("channel"));
@@ -21,21 +23,27 @@ ClientConfig ClientConfig::Load(const fs::path &path)
     value.packageType = Component(json.at("packageType"));
     value.target = json.at("target");
     SafeRelative(value.target);
+
     auto base = fs::absolute(path).parent_path();
     auto localPath = [&](const std::string &member)
     { return fs::absolute(base / fs::u8path(json.at(member).get<std::string>())).lexically_normal(); };
+
     value.trustedRoot = localPath("trustedRoot");
     value.stateDirectory = localPath("stateDirectory");
     value.installDirectory = localPath("installDirectory");
     if (value.repository.find("://") == std::string::npos)
         value.repository = fs::absolute(base / fs::u8path(value.repository)).u8string();
+
     value.allowLoopbackHttp = json.value("allowLoopbackHttp", false);
     value.maxDownloadBytes = json.value("maxDownloadBytes", value.maxDownloadBytes);
     value.maxExtractedBytes = json.value("maxExtractedBytes", value.maxExtractedBytes);
+
     Require(value.maxDownloadBytes > 0 && value.maxExtractedBytes > 0, ErrorCode::invalidInput,
             "Quotas must be positive");
+
     return value;
 }
+
 UpdateClient::UpdateClient(ClientConfig value)
     : UpdateClient(std::move(value), std::make_unique<OpenSslCrypto>(), nullptr, nullptr)
 {
@@ -56,8 +64,10 @@ UpdateClient::UpdateClient(ClientConfig value, std::unique_ptr<CryptoProvider> v
     Require(installer || config.packageType == "portable" || config.packageType == "electron" ||
                 NativeInstaller::Supports(config.packageType),
             ErrorCode::unsupported, "Unsupported installer on this platform");
+
     SecureDirectory(config.stateDirectory);
     SecureDirectory(config.installDirectory);
+
     if (!transport)
     {
         if (config.repository.find("://") == std::string::npos)
@@ -65,14 +75,17 @@ UpdateClient::UpdateClient(ClientConfig value, std::unique_ptr<CryptoProvider> v
         else
             transport = std::make_unique<CurlTransport>(config.repository, config.allowLoopbackHttp);
     }
+
     if (!installer && config.packageType == "portable")
         installer = std::make_unique<PortableInstaller>(config.maxExtractedBytes);
     else if (!installer && config.packageType != "electron")
         installer = std::make_unique<NativeInstaller>();
+
     tuf =
         std::make_unique<TufClient>(*transport, *crypto, config.trustedRoot, config.stateDirectory / "trust");
 }
-void UpdateClient::ValidateState(const Json &state) const
+
+void UpdateClient::ValidateInstallationState(const Json &state) const
 {
     Require(state.at("appId") == config.appId && state.at("channel") == config.channel &&
                 state.at("os") == config.os && state.at("arch") == config.arch &&
@@ -81,15 +94,19 @@ void UpdateClient::ValidateState(const Json &state) const
                 state.at("bootstrap") == crypto->Hash(CanonicalJson(ReadJson(config.trustedRoot))),
             ErrorCode::trust, "State scope does not match this client configuration");
 }
-Json UpdateClient::LoadState() const
+
+Json UpdateClient::LoadInstallationState() const
 {
     auto path = config.stateDirectory / "installation.json";
+
     if (fs::exists(path))
     {
         auto state = ReadJson(path);
-        ValidateState(state);
+        ValidateInstallationState(state);
+
         return state;
     }
+
     return {{"appId", config.appId},
             {"channel", config.channel},
             {"os", config.os},
@@ -101,15 +118,18 @@ Json UpdateClient::LoadState() const
             {"sequence", 0},
             {"phase", "idle"}};
 }
-Target UpdateClient::Resolve(const Cancellation &cancel)
+
+Target UpdateClient::ResolveTrustedTarget(const Cancellation &cancel)
 {
-    auto target = tuf->Resolve(config.target, cancel);
+    auto target = tuf->ResolveTarget(config.target, cancel);
     const auto &custom = target.custom;
+
     Require(custom.at("schemaVersion") == 1 && custom.at("appId") == config.appId &&
                 custom.at("channel") == config.channel && custom.at("os") == config.os &&
                 custom.at("arch") == config.arch && custom.at("packageType") == config.packageType,
             ErrorCode::trust,
             "Signed target does not match selected application, channel, platform or installer");
+
     Require(custom.at("releaseSequence").is_number_unsigned() ||
                 (custom.at("releaseSequence").is_number_integer() &&
                  custom.at("releaseSequence").get<std::int64_t>() > 0),
@@ -119,34 +139,42 @@ Target UpdateClient::Resolve(const Cancellation &cancel)
             ErrorCode::trust, "Invalid release sequence");
     Require(custom.value("minUpdaterMajor", 2) <= 2, ErrorCode::unsupported,
             "A newer BazUpgrade is required");
+
     Require(target.length <= config.maxDownloadBytes &&
                 target.hashes.at("sha256").get<std::string>().size() == 64,
             ErrorCode::invalidInput, "Artifact exceeds policy or has an invalid hash");
     Unhex(target.hashes.at("sha256"));
-    auto trusted = LoadState();
+
+    auto trusted = LoadInstallationState();
     auto sequence = custom.at("releaseSequence").get<std::uint64_t>();
     auto floor = trusted.value("trustedSequence", trusted.at("sequence").get<std::uint64_t>());
+
     Require(sequence >= floor, ErrorCode::rollback, "Trusted application release sequence rollback");
     if (sequence == floor && trusted.contains("trustedSha256"))
         Require(trusted.at("trustedSha256") == target.hashes.at("sha256"), ErrorCode::trust,
                 "Trusted release sequence reused");
+
     trusted["trustedSequence"] = sequence;
     trusted["trustedSha256"] = target.hashes.at("sha256");
     WriteJson(config.stateDirectory / "installation.json", trusted);
+
     return target;
 }
-Json UpdateClient::Check(const Cancellation &cancel)
+
+Json UpdateClient::CheckForUpdate(const Cancellation &cancel)
 {
     FileLock lock(config.stateDirectory / "operation.lock");
-    auto state = LoadState();
-    auto target = Resolve(cancel);
-    state = LoadState();
+    auto state = LoadInstallationState();
+    auto target = ResolveTrustedTarget(cancel);
+    state = LoadInstallationState();
     auto sequence = target.custom.at("releaseSequence").get<std::uint64_t>();
     auto installed = state.at("sequence").get<std::uint64_t>();
+
     Require(sequence >= installed, ErrorCode::rollback, "Application release sequence rollback");
     if (sequence == installed && state.contains("sha256"))
         Require(state.value("acceptedSha256", state.value("sha256", "")) == target.hashes.at("sha256"),
                 ErrorCode::trust, "Same release sequence identifies different bytes");
+
     return {{"status", sequence > installed ? "updateAvailable" : "upToDate"},
             {"appId", config.appId},
             {"version", target.custom.at("appVersion")},
@@ -155,49 +183,61 @@ Json UpdateClient::Check(const Cancellation &cancel)
             {"length", target.length},
             {"phase", state.at("phase")}};
 }
-Json UpdateClient::VerifyFile(const fs::path &path, const Cancellation &cancel)
+
+Json UpdateClient::VerifyDownloadedFile(const fs::path &path, const Cancellation &cancel)
 {
     FileLock lock(config.stateDirectory / "operation.lock");
-    auto target = Resolve(cancel);
+    auto target = ResolveTrustedTarget(cancel);
+
     Require(!fs::is_symlink(fs::symlink_status(path)) && fs::is_regular_file(path) &&
                 fs::file_size(path) == target.length,
             ErrorCode::trust, "Downloaded file size mismatch");
+
     for (auto it = target.hashes.begin(); it != target.hashes.end(); ++it)
         if (it.key() == "sha256" || it.key() == "sha512")
             Require(crypto->HashFile(path, it.key()) == it.value(), ErrorCode::trust,
                     "Downloaded file hash mismatch");
+
     return {{"status", "verified"},
             {"sha256", target.hashes.at("sha256")},
             {"version", target.custom.at("appVersion")}};
 }
-Json UpdateClient::Status()
+
+Json UpdateClient::ReadInstallationState()
 {
     FileLock lock(config.stateDirectory / "operation.lock");
-    return LoadState();
+
+    return LoadInstallationState();
 }
-Json UpdateClient::Apply(const Cancellation &cancel, std::uint64_t waitPid,
-                         const std::function<void()> &ready)
+
+Json UpdateClient::ApplyUpdate(const Cancellation &cancel, std::uint64_t waitPid,
+                               const std::function<void()> &ready)
 {
     Require(waitPid <= 2147483647, ErrorCode::invalidInput, "Process id out of range");
     Require(config.packageType != "electron", ErrorCode::unsupported,
             "Electron targets use native updater integration");
+
     FileLock stateLock(config.stateDirectory / "operation.lock");
     FileLock installLock(config.installDirectory / "installation.lock");
     auto ownerPath = config.installDirectory / "owner.json";
     Json owner = {{"appId", config.appId}, {"stateDirectory", config.stateDirectory.generic_u8string()}};
+
     if (fs::exists(ownerPath))
         Require(ReadJson(ownerPath) == owner, ErrorCode::trust,
                 "Installation directory belongs to another application");
     else
         WriteJson(ownerPath, owner);
-    auto state = LoadState();
+
+    auto state = LoadInstallationState();
     auto phase = state.at("phase").get<std::string>();
     Require(phase == "idle" || phase == "complete", ErrorCode::unknownOutcome,
             "Pending operation requires inspection and explicit reconciliation");
-    auto target = Resolve(cancel);
-    state = LoadState();
+
+    auto target = ResolveTrustedTarget(cancel);
+    state = LoadInstallationState();
     auto sequence = target.custom.at("releaseSequence").get<std::uint64_t>();
     auto current = state.at("sequence").get<std::uint64_t>();
+
     Require(sequence >= current, ErrorCode::rollback, "Application release sequence rollback");
     if (sequence == current)
     {
@@ -205,6 +245,7 @@ Json UpdateClient::Apply(const Cancellation &cancel, std::uint64_t waitPid,
                 ErrorCode::trust, "Release sequence reused for different bytes");
         return {{"status", "upToDate"}};
     }
+
     auto hash = target.hashes.at("sha256").get<std::string>();
     SecureDirectory(config.stateDirectory / "downloads");
     auto extension = config.packageType == "msix"   ? ".msix"
@@ -215,10 +256,12 @@ Json UpdateClient::Apply(const Cancellation &cancel, std::uint64_t waitPid,
                      : config.packageType == "pkg"  ? ".pkg"
                                                     : ".archive";
     auto artifact = config.stateDirectory / "downloads" / (hash + extension);
+
     state["pending"] = {
         {"sequence", sequence}, {"version", target.custom.at("appVersion")}, {"sha256", hash}};
     state["phase"] = "downloading";
     WriteJson(config.stateDirectory / "installation.json", state);
+
     try
     {
         cancel.Check();
@@ -228,22 +271,28 @@ Json UpdateClient::Apply(const Cancellation &cancel, std::uint64_t waitPid,
             partial += ".partial";
             Require(!fs::exists(partial), ErrorCode::io,
                     "Interrupted download exists; inspect and reconcile");
-            tuf->Download(target, partial, cancel);
+            tuf->DownloadAndVerifyTarget(target, partial, cancel);
             fs::rename(partial, artifact);
         }
+
         Require(!fs::is_symlink(fs::symlink_status(artifact)) && fs::file_size(artifact) == target.length &&
                     crypto->HashFile(artifact) == hash,
                 ErrorCode::trust, "Cached artifact failed verification");
+
         state["phase"] = "ready";
         WriteJson(config.stateDirectory / "installation.json", state);
+
         if (ready)
             ready();
         if (waitPid)
             WaitForProcess(waitPid, cancel);
         cancel.Check();
+
         state["phase"] = "applying";
         WriteJson(config.stateDirectory / "installation.json", state);
+
         auto result = installer->Apply(target, artifact, config.installDirectory, cancel);
+
         if (state.contains("activePath"))
             state["previous"] = {{"activePath", state.at("activePath")},
                                  {"version", state.value("version", "")},
@@ -257,6 +306,7 @@ Json UpdateClient::Apply(const Cancellation &cancel, std::uint64_t waitPid,
         state["phase"] = result.rebootRequired ? "pendingReboot" : "complete";
         state.erase("pending");
         WriteJson(config.stateDirectory / "installation.json", state);
+
         return {{"status", result.rebootRequired ? "pendingReboot" : "updated"}, {"state", state}};
     }
     catch (...)
@@ -265,15 +315,18 @@ Json UpdateClient::Apply(const Cancellation &cancel, std::uint64_t waitPid,
         throw;
     }
 }
-Json UpdateClient::Reconcile(bool installed)
+
+Json UpdateClient::ReconcileInstallationOutcome(bool installed)
 {
     FileLock stateLock(config.stateDirectory / "operation.lock");
     FileLock installLock(config.installDirectory / "installation.lock");
-    auto state = LoadState();
+    auto state = LoadInstallationState();
+
     Require(state.at("phase") != "idle" && state.at("phase") != "complete", ErrorCode::invalidInput,
             "No interrupted operation to reconcile");
     Require(state.at("phase") != "pendingReboot" || installed, ErrorCode::invalidInput,
             "Observe reboot completion before confirming this installation");
+
     if (installed)
     {
         if (state.contains("pending"))
@@ -286,11 +339,13 @@ Json UpdateClient::Reconcile(bool installed)
             state["acceptedSha256"] = state.at("sha256");
         }
     }
+
     if (!installed && state.contains("pending"))
     {
         auto hash = state.at("pending").at("sha256").get<std::string>();
         Require(hash.size() == 64, ErrorCode::trust, "Invalid pending artifact hash");
         Unhex(hash);
+
         auto downloads = config.stateDirectory / "downloads";
         if (fs::exists(downloads))
         {
@@ -300,6 +355,7 @@ Json UpdateClient::Reconcile(bool installed)
                     file.path().extension() == ".partial")
                     fs::remove(file.path());
         }
+
         auto staging = config.installDirectory / "versions" / hash;
         bool active = state.value("sha256", "") == hash ||
                       (state.contains("previous") && state.at("previous").value("sha256", "") == hash);
@@ -312,25 +368,32 @@ Json UpdateClient::Reconcile(bool installed)
             fs::remove_all(staging);
         }
     }
+
     state.erase("pending");
     state["phase"] = state.at("sequence").get<std::uint64_t>() ? "complete" : "idle";
     WriteJson(config.stateDirectory / "installation.json", state);
+
     return state;
 }
-Json UpdateClient::Rollback()
+
+Json UpdateClient::RollbackPortableInstallation()
 {
     FileLock stateLock(config.stateDirectory / "operation.lock");
     FileLock installLock(config.installDirectory / "installation.lock");
-    auto state = LoadState();
+    auto state = LoadInstallationState();
+
     Require(config.packageType == "portable" && state.at("phase") == "complete" && state.contains("previous"),
             ErrorCode::unsupported, "No portable rollback is available");
+
     auto previous = state.at("previous");
     auto path = fs::u8path(previous.at("activePath").get<std::string>());
     auto relative = path.lexically_relative(config.installDirectory / "versions");
+
     SafeRelative(relative.generic_u8string());
     SecureDirectory(path.parent_path());
     Require(fs::is_regular_file(path) && !fs::is_symlink(path), ErrorCode::io,
             "Previous installation is unavailable");
+
     state["previous"] = {{"activePath", state.at("activePath")},
                          {"version", state.at("version")},
                          {"sha256", state.at("sha256")}};
@@ -339,14 +402,18 @@ Json UpdateClient::Rollback()
     state["sha256"] = previous.at("sha256");
     // Keep the sequence high-water mark even when explicitly selecting older files.
     WriteJson(config.stateDirectory / "installation.json", state);
+
     return state;
 }
+
 Json Capabilities()
 {
     Json installers = Json::array({"portable"});
+
     for (const std::string kind : {"msix", "msi", "nsis", "deb", "rpm", "pkg"})
         if (NativeInstaller::Supports(kind))
             installers.push_back(kind);
+
     return {{"schemaVersion", 1},
             {"updaterMajor", 2},
             {"installers", installers},

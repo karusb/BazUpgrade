@@ -1,5 +1,6 @@
 #pragma once
 #include "interfaces/Installer.hpp"
+
 namespace baz
 {
 class PortableInstaller final : public Installer
@@ -14,6 +15,7 @@ class PortableInstaller final : public Installer
     std::uint64_t maxBytes;
     std::uint64_t maxEntries;
 };
+
 void PackDirectory(const fs::path &directory, const fs::path &output);
 void SecureDirectory(const fs::path &directory);
 } // namespace baz

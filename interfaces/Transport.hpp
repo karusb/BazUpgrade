@@ -9,6 +9,7 @@ namespace baz
 struct Cancellation
 {
     std::atomic<bool> requested{false};
+
     void Check() const
     {
         Require(!requested.load(), ErrorCode::cancelled, "Operation cancelled");

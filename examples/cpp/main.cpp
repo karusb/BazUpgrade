@@ -1,6 +1,7 @@
 #include <BazPO.hpp>
 #include <bazupgrade/BazUpgrade.hpp>
 #include <iostream>
+
 int main(int argc, const char *argv[])
 {
     BazPO::Cli cli(argc, argv, "Installed BazUpgrade C++ SDK consumer");

@@ -6,8 +6,19 @@
 #include <bazupgrade/BazUpgrade.hpp>
 baz::UpdateClient updater(baz::ClientConfig::Load("client.json"));
 baz::Cancellation cancellation;
-auto result = updater.Check(cancellation);
+auto result = updater.CheckForUpdate(cancellation);
 ~~~
+
+| Operation | C++ client method |
+|---|---|
+| Check the trusted repository for an update | `CheckForUpdate` |
+| Download, verify and install an update | `ApplyUpdate` |
+| Read the persisted installation state | `ReadInstallationState` |
+| Verify a downloaded artifact against trusted metadata | `VerifyDownloadedFile` |
+| Record an observed interrupted installation outcome | `ReconcileInstallationOutcome` |
+| Select the previous portable installation | `RollbackPortableInstallation` |
+
+These names replace the shorter v2 development API names (`Check`, `Apply`, `Status`, `VerifyFile`, `Reconcile`, `Rollback`). CLI commands and C ABI entry points remain compatible.
 
 The constructor also accepts owned CryptoProvider, Transport, and Installer implementations. Registration occurs in trusted application code. Metadata cannot load a plugin or supply a command line.
 

@@ -24,6 +24,7 @@ struct Handle
 {
     HANDLE value = INVALID_HANDLE_VALUE;
     bool discard = false;
+
     ~Handle()
     {
         if (value != INVALID_HANDLE_VALUE)
@@ -37,6 +38,7 @@ struct Handle
         }
     }
 };
+
 void LockDirectory(Handle &handle, const fs::path &path)
 {
     // Attribute-only access does not participate in Windows sharing checks.
@@ -51,6 +53,7 @@ void LockDirectory(Handle &handle, const fs::path &path)
                 !(info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT),
             ErrorCode::io, "Unsafe metadata directory");
 }
+
 void OpenRelative(Handle &handle, HANDLE directory, const std::string &name, ACCESS_MASK access,
                   ULONG disposition, ULONG options)
 {
@@ -79,6 +82,7 @@ void OpenRelative(Handle &handle, HANDLE directory, const std::string &name, ACC
 struct Descriptor
 {
     int value = -1;
+
     ~Descriptor()
     {
         if (value >= 0)
@@ -87,6 +91,7 @@ struct Descriptor
 };
 #endif
 } // namespace
+
 struct MetadataDirectory::Impl
 {
     fs::path path;
@@ -96,6 +101,7 @@ struct MetadataDirectory::Impl
     Descriptor root, metadata;
 #endif
 };
+
 MetadataDirectory::MetadataDirectory(const fs::path &repository) : impl(std::make_unique<Impl>())
 {
     SecureDirectory(repository);
@@ -114,7 +120,9 @@ MetadataDirectory::MetadataDirectory(const fs::path &repository) : impl(std::mak
     Require(impl->metadata.value >= 0, ErrorCode::io, "Unsafe metadata directory");
 #endif
 }
+
 MetadataDirectory::~MetadataDirectory() = default;
+
 Json MetadataDirectory::Read(const std::string &name) const
 {
     Component(name);
@@ -141,9 +149,11 @@ Json MetadataDirectory::Read(const std::string &name) const
     Descriptor file;
     file.value = openat(impl->metadata.value, name.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
     Require(file.value >= 0, ErrorCode::io, "Cannot read metadata file");
+
     struct stat info
     {
     };
+
     Require(fstat(file.value, &info) == 0 && S_ISREG(info.st_mode), ErrorCode::io, "Unsafe metadata file");
     char buffer[16384];
     while (true)
@@ -161,6 +171,7 @@ Json MetadataDirectory::Read(const std::string &name) const
 #endif
     return ParseJson(bytes);
 }
+
 void MetadataDirectory::Write(const std::string &name, const Json &value) const
 {
     Component(name);
@@ -210,11 +221,13 @@ void MetadataDirectory::Write(const std::string &name, const Json &value) const
     {
         int directory;
         const std::string &name;
+
         ~Cleanup()
         {
             unlinkat(directory, name.c_str(), 0);
         }
     } cleanup{impl->metadata.value, temporary};
+
     Descriptor file;
     file.value = openat(impl->metadata.value, temporary.c_str(),
                         O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);

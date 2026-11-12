@@ -16,16 +16,19 @@ namespace
 struct Provider
 {
     NCRYPT_PROV_HANDLE value = 0;
+
     ~Provider()
     {
         if (value)
             NCryptFreeObject(value);
     }
 };
+
 struct Key
 {
     NCRYPT_KEY_HANDLE value = 0;
     bool persist = false;
+
     ~Key()
     {
         if (!value)
@@ -36,24 +39,29 @@ struct Key
             NCryptDeleteKey(value, 0);
     }
 };
+
 struct Certificate
 {
     PCCERT_CONTEXT value = nullptr;
+
     ~Certificate()
     {
         if (value)
             CertFreeCertificateContext(value);
     }
 };
+
 struct Store
 {
     HCERTSTORE value = nullptr;
+
     ~Store()
     {
         if (value)
             CertCloseStore(value, 0);
     }
 };
+
 std::vector<BYTE> Encode(LPCSTR type, const void *value)
 {
     DWORD size = 0;
@@ -65,6 +73,7 @@ std::vector<BYTE> Encode(LPCSTR type, const void *value)
     return bytes;
 }
 } // namespace
+
 Json CreateTestCertificate(const fs::path &output)
 {
     Require(!fs::exists(output) && !fs::is_symlink(fs::symlink_status(output)), ErrorCode::invalidInput,
@@ -170,6 +179,7 @@ Json CreateTestCertificate(const fs::path &output)
         throw;
     }
 }
+
 Json SignWindowsArtifact(const fs::path &artifact, const std::string &thumbprint, const fs::path &signingTool,
                          const std::string &timestampUrl)
 {

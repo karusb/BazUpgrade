@@ -26,6 +26,7 @@ Json ParseJson(const std::string &bytes)
 {
     // Reject duplicate members before a DOM parser could overwrite their values.
     std::vector<std::set<std::string>> members;
+
     auto callback = [&](int depth, Json::parse_event_t event, Json &value)
     {
         Require(depth <= 128, ErrorCode::trust, "JSON nesting limit exceeded");
@@ -38,6 +39,7 @@ Json ParseJson(const std::string &bytes)
             members.pop_back();
         return true;
     };
+
     try
     {
         return Json::parse(bytes, callback);
@@ -86,9 +88,12 @@ std::string CanonicalJson(const Json &value)
 std::string ReadFile(const fs::path &path, std::uint64_t limit)
 {
     std::ifstream file(path, std::ios::binary);
+
     Require(file.good(), ErrorCode::io, "Cannot open file: " + path.filename().string());
+
     std::string out;
     char buffer[16384];
+
     while (file.read(buffer, sizeof(buffer)) || file.gcount())
     {
         Require(out.size() + static_cast<std::uint64_t>(file.gcount()) <= limit, ErrorCode::io,
@@ -96,6 +101,7 @@ std::string ReadFile(const fs::path &path, std::uint64_t limit)
         out.append(buffer, static_cast<std::size_t>(file.gcount()));
     }
     Require(file.eof(), ErrorCode::io, "File read failed");
+
     return out;
 }
 
@@ -140,8 +146,10 @@ void AtomicWrite(const fs::path &path, const std::string &bytes)
 {
     if (!path.parent_path().empty())
         fs::create_directories(path.parent_path());
+
     auto temporary = path;
     temporary += ".next";
+
     Require(!fs::is_symlink(fs::symlink_status(path)) && !fs::exists(temporary), ErrorCode::io,
             "Unsafe or interrupted state write; inspect .next file");
 #ifdef _WIN32

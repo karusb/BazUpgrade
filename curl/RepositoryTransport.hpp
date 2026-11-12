@@ -5,6 +5,7 @@
 #include <memory>
 
 class HTTPClientCurl;
+
 namespace curlwrapper
 {
 class HttpUrl;
@@ -27,7 +28,8 @@ class DirectoryTransport final : public Transport
   private:
     static void CopyArtifact(std::istream &input, std::ostream &output, std::uint64_t limit,
                              const Cancellation &cancel);
-    fs::path Resolve(const std::string &path) const;
+    fs::path ResolveRepositoryPath(const std::string &path) const;
+
     fs::path root;
 };
 
@@ -43,10 +45,13 @@ class CurlTransport final : public Transport
 
   private:
     static void ValidateRepositoryUrl(const curlwrapper::HttpUrl &url, bool allowLoopbackHttp);
-    static curlwrapper::RequestOptions MakeClientOptions(bool allowLoopbackHttp);
-    static curlwrapper::TransferOptions MakeTransferOptions(std::uint64_t limit, const Cancellation &cancel);
-    static Error TranslateError(const curlwrapper::Error &error, ErrorCode inputError = ErrorCode::transport);
-    std::string ResolveUrl(const std::string &path) const;
+    static curlwrapper::RequestOptions CreateRepositoryRequestOptions(bool allowLoopbackHttp);
+    static curlwrapper::TransferOptions CreateBoundedTransferOptions(std::uint64_t limit,
+                                                                     const Cancellation &cancel);
+    static Error TranslateTransferError(const curlwrapper::Error &error,
+                                        ErrorCode inputError = ErrorCode::transport);
+    std::string ResolveRepositoryUrl(const std::string &path) const;
+
     std::unique_ptr<curlwrapper::HttpUrl> baseUrl;
     std::unique_ptr<HTTPClientCurl> client;
 };

@@ -12,15 +12,18 @@
 #include <functional>
 #include <iostream>
 #include <openssl/rand.h>
+
 namespace test
 {
 using namespace baz;
 extern unsigned passed, failed;
+
 inline void Check(bool value, const std::string &message)
 {
     if (!value)
         throw std::runtime_error(message);
 }
+
 inline void Case(const char *name, const std::function<void()> &body)
 {
     try
@@ -35,6 +38,7 @@ inline void Case(const char *name, const std::function<void()> &body)
         std::cerr << "FAIL " << name << ": " << error.what() << '\n';
     }
 }
+
 inline void Reject(ErrorCode code, const std::function<void()> &body)
 {
     try
@@ -48,6 +52,7 @@ inline void Reject(ErrorCode code, const std::function<void()> &body)
     }
     throw std::runtime_error("Operation unexpectedly succeeded");
 }
+
 inline void Bytes(const fs::path &path, const std::string &value)
 {
     fs::create_directories(path.parent_path());
@@ -55,12 +60,14 @@ inline void Bytes(const fs::path &path, const std::string &value)
     file << value;
     Check(file.good(), "Fixture write failed");
 }
+
 struct Fixture
 {
     fs::path root, repo, keys, bootstrap, package;
     ClientConfig config;
     OpenSslCrypto crypto;
     Cancellation cancel;
+
     Fixture()
     {
         unsigned char random[16];
@@ -89,11 +96,13 @@ struct Fixture
         config.stateDirectory = root / "client";
         config.installDirectory = root / "installed";
     }
+
     ~Fixture()
     {
         std::error_code error;
         fs::remove_all(root, error);
     }
+
     Json Custom(std::uint64_t sequence = 1) const
     {
         return {{"schemaVersion", 1},
@@ -107,10 +116,12 @@ struct Fixture
                 {"entrypoint", "app.txt"},
                 {"minUpdaterMajor", 2}};
     }
+
     void Publish(std::uint64_t sequence = 1)
     {
         RepositoryPublisher(repo, keys).Publish(package, config.target, Custom(sequence));
     }
+
     std::vector<fs::path> RoleKeys(const std::string &role) const
     {
         std::vector<fs::path> files;
@@ -119,10 +130,12 @@ struct Fixture
             files.push_back(keys / value.get<std::string>());
         return files;
     }
+
     void Resign(const std::string &name, const Json &body, const std::string &role)
     {
         WriteJson(repo / "metadata" / name, Sign(body, RoleKeys(role)));
     }
+
     void Delegate(const std::string &name, const std::string &pattern, bool terminating, bool includeTarget)
     {
         auto privateKey = keys / (name + ".pem");
@@ -162,6 +175,7 @@ struct Fixture
         timestamp["meta"]["snapshot.json"] = DescriptionFor(signedSnapshot);
         Resign("timestamp.json", timestamp, "timestamp");
     }
+
     Json DescriptionFor(const Json &envelope) const
     {
         auto bytes = envelope.dump(2) + '\n';
@@ -170,6 +184,7 @@ struct Fixture
                 {"hashes", {{"sha256", crypto.Hash(bytes)}}}};
     }
 };
+
 inline Json Description(const Json &envelope)
 {
     OpenSslCrypto crypto;
@@ -178,6 +193,7 @@ inline Json Description(const Json &envelope)
             {"length", bytes.size()},
             {"hashes", {{"sha256", crypto.Hash(bytes)}}}};
 }
+
 inline void MaliciousZip(const fs::path &output, const std::string &name, bool link = false)
 {
     archive *writer = archive_write_new();
@@ -198,6 +214,7 @@ inline void MaliciousZip(const fs::path &output, const std::string &name, bool l
     archive_write_close(writer);
     archive_write_free(writer);
 }
+
 void TrustTests();
 void EngineTests();
 } // namespace test

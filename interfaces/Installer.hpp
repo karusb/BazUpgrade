@@ -1,6 +1,7 @@
 #pragma once
 #include "interfaces/Target.hpp"
 #include "interfaces/Transport.hpp"
+
 namespace baz
 {
 struct InstallResult
@@ -8,6 +9,7 @@ struct InstallResult
     bool rebootRequired = false;
     std::string activePath;
 };
+
 class Installer
 {
   public:

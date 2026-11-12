@@ -1,6 +1,7 @@
 #pragma once
 #include "util/Json.hpp"
 #include <algorithm>
+
 namespace baz
 {
 inline std::uint64_t ProcessId(const std::string &value)
