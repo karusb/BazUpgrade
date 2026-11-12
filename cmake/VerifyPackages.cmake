@@ -35,6 +35,14 @@ foreach(archive IN LISTS archives)
     if(private_sources)
         message(FATAL_ERROR "Private CurlWrapper source entered a public package")
     endif()
+    file(GLOB_RECURSE implementation_headers
+        "${prefix}/include/bazupgrade/controllers/detail/*"
+        "${prefix}/include/bazupgrade/tests/*"
+        "${prefix}/include/gtest/*"
+        "${prefix}/include/gmock/*")
+    if(implementation_headers)
+        message(FATAL_ERROR "Implementation or test headers entered the public SDK")
+    endif()
     file(GLOB sdk "${prefix}/bin/bazupgrade-sdk.dll" "${prefix}/lib/libbazupgrade-sdk.so" "${prefix}/lib/libbazupgrade-sdk.dylib")
     list(LENGTH sdk sdk_count)
     if(NOT sdk_count EQUAL 1)

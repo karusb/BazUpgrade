@@ -89,7 +89,7 @@ std::string ReadFile(const fs::path &path, std::uint64_t limit)
 {
     std::ifstream file(path, std::ios::binary);
 
-    Require(file.good(), ErrorCode::io, "Cannot open file: " + path.filename().string());
+    Require(file.good(), ErrorCode::io, "Cannot open file: " + path.filename().u8string());
 
     std::string out;
     char buffer[16384];

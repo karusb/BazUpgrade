@@ -1,6 +1,8 @@
 #include "publishing/RepositoryPublisher.hpp"
 #include "controllers/PortableInstaller.hpp"
 #include "crypto/OpenSslCrypto.hpp"
+#include "interfaces/HttpUrl.hpp"
+#include "interfaces/Transfer.hpp"
 #include "storage/FileLock.hpp"
 #include "storage/MetadataDirectory.hpp"
 #include "tuf/Metadata.hpp"
@@ -8,6 +10,7 @@
 #include <iomanip>
 #include <openssl/evp.h>
 #include <sstream>
+#include <utility>
 
 namespace baz
 {
@@ -106,6 +109,28 @@ std::vector<fs::path> RepositoryPublisher::GetRoleSigningKeys(const Json &ring, 
     return output;
 }
 
+void RepositoryPublisher::GenerateRoleKeys(Json &root, Json &ring, const std::string &role,
+                                           std::uint64_t version, unsigned count, unsigned threshold) const
+{
+    OpenSslCrypto crypto;
+    Json ids = Json::array();
+    Json filenames = Json::array();
+
+    for (unsigned index = 0; index < count; ++index)
+    {
+        const auto filename = role + "-" + std::to_string(version) + "-" + std::to_string(index) + ".pem";
+        const auto publicKey = GenerateEd25519Key(keys / filename);
+        const auto id = crypto.Hash(CanonicalJson(publicKey));
+
+        root["keys"][id] = publicKey;
+        ids.push_back(id);
+        filenames.push_back(filename);
+    }
+
+    root["roles"][role] = {{"keyids", ids}, {"threshold", threshold}};
+    ring["privateKeys"][role] = filenames;
+}
+
 Json RepositoryPublisher::Initialize()
 {
     FileLock lock(keys / "publish.lock");
@@ -119,27 +144,9 @@ Json RepositoryPublisher::Initialize()
     root["consistent_snapshot"] = true;
     root["keys"] = Json::object();
     root["roles"] = Json::object();
-    OpenSslCrypto crypto;
 
     for (const std::string role : {"root", "targets", "snapshot", "timestamp"})
-    {
-        Json ids = Json::array();
-        Json files = Json::array();
-        int count = role == "root" ? 3 : 1;
-
-        for (int i = 0; i < count; ++i)
-        {
-            auto name = role + "-1-" + std::to_string(i) + ".pem";
-            auto publicKey = GenerateEd25519Key(keys / name);
-            auto id = crypto.Hash(CanonicalJson(publicKey));
-            root["keys"][id] = publicKey;
-            ids.push_back(id);
-            files.push_back(name);
-        }
-
-        root["roles"][role] = {{"keyids", ids}, {"threshold", role == "root" ? 2 : 1}};
-        ring["privateKeys"][role] = files;
-    }
+        GenerateRoleKeys(root, ring, role, 1, role == "root" ? 3 : 1, role == "root" ? 2 : 1);
 
     WriteJson(keys / "keyring.json", ring);
     auto envelope = Sign(root, GetRoleSigningKeys(ring, "root"));
@@ -195,7 +202,7 @@ void RepositoryPublisher::WriteOnlineMetadata(const Json &checkpoint)
     directory.Write("timestamp.json", envelopes.at("timestamp"));
 }
 
-Json RepositoryPublisher::CommitTargets(Json body)
+Json RepositoryPublisher::BuildPublicationCheckpoint(Json body)
 {
     auto ring = ReadJson(keys / "keyring.json");
     bool initialized = fs::exists(keys / "publication.json");
@@ -206,7 +213,6 @@ Json RepositoryPublisher::CommitTargets(Json body)
 
     body["expires"] = ComputeMetadataExpiration(30);
     auto targets = Sign(body, GetRoleSigningKeys(ring, "targets"));
-    auto version = body.at("version").get<std::uint64_t>();
 
     auto snapshot = CreateMetadataBody("snapshot", snapshotVersion, 7);
     snapshot["meta"] = {{"targets.json", DescribeSignedMetadata(targets)}};
@@ -220,6 +226,15 @@ Json RepositoryPublisher::CommitTargets(Json body)
                         {{"targets", targets},
                          {"snapshot", signedSnapshot},
                          {"timestamp", Sign(timestamp, GetRoleSigningKeys(ring, "timestamp"))}}}};
+
+    return checkpoint;
+}
+
+Json RepositoryPublisher::CommitTargets(Json body)
+{
+    const auto checkpoint = BuildPublicationCheckpoint(std::move(body));
+    const auto &envelopes = checkpoint.at("envelopes");
+
     Require(checkpoint.dump(2).size() + 1 <= 4 * 1024 * 1024, ErrorCode::invalidInput,
             "Combined publisher metadata exceeds 4 MiB checkpoint quota");
 
@@ -228,15 +243,13 @@ Json RepositoryPublisher::CommitTargets(Json body)
     WriteJson(keys / "publication.json", checkpoint);
     WriteOnlineMetadata(checkpoint);
 
-    return {{"status", "published"}, {"targetsVersion", version}, {"timestampVersion", timestampVersion}};
+    return {{"status", "published"},
+            {"targetsVersion", envelopes.at("targets").at("signed").at("version").get<std::uint64_t>()},
+            {"timestampVersion", envelopes.at("timestamp").at("signed").at("version").get<std::uint64_t>()}};
 }
 
-Json RepositoryPublisher::Publish(const fs::path &artifact, const std::string &targetPath, const Json &custom)
+void RepositoryPublisher::ValidateReleaseDescriptor(const Json &custom)
 {
-    FileLock lock(keys / "publish.lock");
-    FileLock repositoryLock(repository / ".publish.lock");
-    auto target = SafeRelative(targetPath);
-
     for (const std::string field : {"appId", "channel", "os", "arch", "packageType"})
         Component(custom.at(field));
     Require(custom.at("schemaVersion") == 1 && custom.at("releaseSequence").get<std::uint64_t>() > 0 &&
@@ -246,18 +259,18 @@ Json RepositoryPublisher::Publish(const fs::path &artifact, const std::string &t
             ErrorCode::invalidInput, "Application version is required");
     if (custom.at("packageType") == "portable")
         SafeRelative(custom.at("entrypoint"));
+}
 
-    auto targets = ReadSignedMetadata("targets");
-    if (targets.at("targets").contains(targetPath))
-        Require(
-            custom.at("releaseSequence").get<std::uint64_t>() >
-                targets.at("targets").at(targetPath).at("custom").at("releaseSequence").get<std::uint64_t>(),
-            ErrorCode::rollback, "Release sequence must strictly increase");
+fs::path RepositoryPublisher::GetHashedTargetPath(const fs::path &target, const std::string &hash)
+{
+    return target.parent_path() / fs::u8path(hash + "." + target.filename().u8string());
+}
 
+fs::path RepositoryPublisher::CopyPublishedArtifact(const fs::path &artifact, const fs::path &target,
+                                                    const std::string &hash) const
+{
     OpenSslCrypto crypto;
-    auto hash = crypto.HashFile(artifact);
-    auto destination =
-        repository / "targets" / target.parent_path() / (hash + "." + target.filename().string());
+    const auto destination = repository / "targets" / GetHashedTargetPath(target, hash);
 
     SecureDirectory(destination.parent_path());
     if (!fs::exists(destination))
@@ -268,6 +281,28 @@ Json RepositoryPublisher::Publish(const fs::path &artifact, const std::string &t
 #endif
     Require(!fs::is_symlink(fs::symlink_status(destination)) && crypto.HashFile(destination) == hash,
             ErrorCode::trust, "Published artifact changed during transfer");
+
+    return destination;
+}
+
+Json RepositoryPublisher::Publish(const fs::path &artifact, const std::string &targetPath, const Json &custom)
+{
+    FileLock lock(keys / "publish.lock");
+    FileLock repositoryLock(repository / ".publish.lock");
+    auto target = SafeRelative(targetPath);
+
+    ValidateReleaseDescriptor(custom);
+
+    auto targets = ReadSignedMetadata("targets");
+    if (targets.at("targets").contains(targetPath))
+        Require(
+            custom.at("releaseSequence").get<std::uint64_t>() >
+                targets.at("targets").at(targetPath).at("custom").at("releaseSequence").get<std::uint64_t>(),
+            ErrorCode::rollback, "Release sequence must strictly increase");
+
+    OpenSslCrypto crypto;
+    auto hash = crypto.HashFile(artifact);
+    const auto destination = CopyPublishedArtifact(artifact, target, hash);
 
     targets["targets"][targetPath] = {
         {"length", fs::file_size(destination)},
@@ -330,22 +365,8 @@ Json RepositoryPublisher::RotateRoot()
     for (const auto &id : root.at("roles").at("root").at("keyids"))
         root["keys"].erase(id.get<std::string>());
 
-    Json ids = Json::array();
-    Json filenames = Json::array();
-    OpenSslCrypto crypto;
+    GenerateRoleKeys(root, ring, "root", version, 3, 2);
 
-    for (int i = 0; i < 3; ++i)
-    {
-        auto name = "root-" + std::to_string(version) + "-" + std::to_string(i) + ".pem";
-        auto key = GenerateEd25519Key(keys / name);
-        auto id = crypto.Hash(CanonicalJson(key));
-        root["keys"][id] = key;
-        ids.push_back(id);
-        filenames.push_back(name);
-    }
-
-    root["roles"]["root"] = {{"keyids", ids}, {"threshold", 2}};
-    ring["privateKeys"]["root"] = filenames;
     auto newKeys = GetRoleSigningKeys(ring, "root");
     oldKeys.insert(oldKeys.end(), newKeys.begin(), newKeys.end());
     auto envelope = Sign(root, oldKeys);
@@ -359,6 +380,20 @@ Json RepositoryPublisher::RotateRoot()
     return {{"status", "rotated"}, {"rootVersion", version}};
 }
 
+std::string RepositoryPublisher::BuildFeedUrl(const std::string &baseUrl, const std::string &path)
+{
+    const auto base = NormalizeFeedBaseUrl(baseUrl);
+
+    try
+    {
+        return curlwrapper::HttpUrl(base).AppendPath(path).String();
+    }
+    catch (const curlwrapper::Error &error)
+    {
+        throw Error(ErrorCode::invalidInput, error.what());
+    }
+}
+
 Json RepositoryPublisher::ExportElectron(const std::string &targetPath, const std::string &baseUrl,
                                          const fs::path &output)
 {
@@ -366,12 +401,12 @@ Json RepositoryPublisher::ExportElectron(const std::string &targetPath, const st
     FileLock repositoryLock(repository / ".publish.lock");
     auto file = ReadSignedMetadata("targets").at("targets").at(targetPath);
     auto target = SafeRelative(targetPath);
-    auto name = file.at("hashes").at("sha256").get<std::string>() + "." + target.filename().string();
+    const auto artifact = GetHashedTargetPath(target, file.at("hashes").at("sha256"));
     auto hash = Unhex(file.at("hashes").at("sha512"));
     std::string base64(4 * ((hash.size() + 2) / 3), '\0');
     EVP_EncodeBlock(reinterpret_cast<unsigned char *>(base64.data()),
                     reinterpret_cast<const unsigned char *>(hash.data()), static_cast<int>(hash.size()));
-    auto url = NormalizeFeedBaseUrl(baseUrl) + "targets/" + (target.parent_path() / name).generic_string();
+    const auto url = BuildFeedUrl(baseUrl, "targets/" + artifact.generic_u8string());
     Json feed = {{"version", file.at("custom").at("appVersion")},
                  {"files", Json::array({{{"url", url}, {"sha512", base64}, {"size", file.at("length")}}})},
                  {"path", url},
@@ -391,22 +426,22 @@ Json RepositoryPublisher::ExportAppInstaller(const std::string &targetPath, cons
     FileLock repositoryLock(repository / ".publish.lock");
     auto file = ReadSignedMetadata("targets").at("targets").at(targetPath);
     auto target = SafeRelative(targetPath);
-    auto custom = file.at("custom"), identity = custom.at("nativeIdentity");
+    const auto &custom = file.at("custom");
+    const auto &identity = custom.at("nativeIdentity");
     Require(custom.at("packageType") == "msix", ErrorCode::invalidInput,
             "App Installer export requires an MSIX target");
     auto base = NormalizeFeedBaseUrl(baseUrl);
-    auto package = "targets/" + (target.parent_path() / (file.at("hashes").at("sha256").get<std::string>() +
-                                                         "." + target.filename().string()))
-                                    .generic_string();
+    const auto package =
+        "targets/" + GetHashedTargetPath(target, file.at("hashes").at("sha256")).generic_u8string();
     auto version = identity.at("version").get<std::string>();
     auto xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<AppInstaller "
                "xmlns=\"http://schemas.microsoft.com/appx/appinstaller/2021\" Version=\"" +
                EscapeXmlAttribute(version) + "\" Uri=\"" +
-               EscapeXmlAttribute(base + output.filename().string()) + "\">\n  <MainPackage Name=\"" +
-               EscapeXmlAttribute(identity.at("name")) + "\" Publisher=\"" +
+               EscapeXmlAttribute(BuildFeedUrl(base, output.filename().u8string())) +
+               "\">\n  <MainPackage Name=\"" + EscapeXmlAttribute(identity.at("name")) + "\" Publisher=\"" +
                EscapeXmlAttribute(identity.at("publisher")) + "\" Version=\"" + EscapeXmlAttribute(version) +
                "\" ProcessorArchitecture=\"" + EscapeXmlAttribute(identity.at("processorArchitecture")) +
-               "\" Uri=\"" + EscapeXmlAttribute(base + package) +
+               "\" Uri=\"" + EscapeXmlAttribute(BuildFeedUrl(base, package)) +
                "\" />\n  <UpdateSettings><OnLaunch HoursBetweenUpdateChecks=\"12\" "
                "/></UpdateSettings>\n</AppInstaller>\n";
     AtomicWrite(output, xml);

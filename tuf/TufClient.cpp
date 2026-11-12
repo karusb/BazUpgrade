@@ -20,25 +20,80 @@ std::uint64_t ReadMetadataVersion(const Json &value)
     return result;
 }
 
-bool MatchesDelegatedPath(const std::string &encodedPattern, const std::string &encodedValue)
+class DelegatedPathPattern final
 {
-    std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> utf8;
-    const auto pattern = utf8.from_bytes(encodedPattern);
-    const auto value = utf8.from_bytes(encodedValue);
-
-    auto matchesPatternToken = [&](std::size_t &position, char32_t character)
+  public:
+    explicit DelegatedPathPattern(const std::string &encodedPattern) : pattern(DecodeUtf8(encodedPattern))
     {
-        auto begin = position++;
+    }
+
+    bool Matches(const std::string &encodedValue) const
+    {
+        const auto value = DecodeUtf8(encodedValue);
+        std::size_t patternPosition = 0;
+        std::size_t valuePosition = 0;
+        std::size_t starPosition = std::u32string::npos;
+        std::size_t savedValuePosition = 0;
+
+        while (valuePosition < value.size())
+        {
+            if (patternPosition < pattern.size() && pattern[patternPosition] == '*')
+            {
+                starPosition = patternPosition++;
+                savedValuePosition = valuePosition;
+                continue;
+            }
+
+            auto nextPosition = patternPosition;
+            if (patternPosition < pattern.size() && MatchesToken(nextPosition, value[valuePosition]))
+            {
+                patternPosition = nextPosition;
+                ++valuePosition;
+                continue;
+            }
+
+            if (starPosition == std::u32string::npos)
+                return false;
+
+            patternPosition = starPosition + 1;
+            valuePosition = ++savedValuePosition;
+        }
+
+        while (patternPosition < pattern.size() && pattern[patternPosition] == '*')
+            ++patternPosition;
+
+        return patternPosition == pattern.size();
+    }
+
+  private:
+    static std::u32string DecodeUtf8(const std::string &value)
+    {
+        std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> utf8;
+
+        return utf8.from_bytes(value);
+    }
+
+    bool MatchesToken(std::size_t &position, char32_t character) const
+    {
+        const auto begin = position++;
+
         if (pattern[begin] == '?')
             return true;
         if (pattern[begin] != '[')
             return pattern[begin] == character;
 
+        return MatchesCharacterClass(position, character);
+    }
+
+    bool MatchesCharacterClass(std::size_t &position, char32_t character) const
+    {
         auto end = position;
-        bool negate = end < pattern.size() && pattern[end] == '!';
+        const bool negate = end < pattern.size() && pattern[end] == '!';
+
         if (negate)
             ++end;
-        auto first = end;
+
+        const auto first = end;
         if (end < pattern.size() && pattern[end] == ']')
             ++end;
         while (end < pattern.size() && pattern[end] != ']')
@@ -61,34 +116,10 @@ bool MatchesDelegatedPath(const std::string &encodedPattern, const std::string &
         position = end + 1;
 
         return matched != negate;
-    };
-
-    std::size_t p = 0, v = 0, star = std::string::npos, saved = 0;
-    while (v < value.size())
-    {
-        if (p < pattern.size() && pattern[p] == '*')
-        {
-            star = p++;
-            saved = v;
-            continue;
-        }
-        auto next = p;
-        if (p < pattern.size() && matchesPatternToken(next, value[v]))
-        {
-            p = next;
-            ++v;
-            continue;
-        }
-        if (star == std::string::npos)
-            return false;
-        p = star + 1;
-        v = ++saved;
     }
-    while (p < pattern.size() && pattern[p] == '*')
-        ++p;
 
-    return p == pattern.size();
-}
+    const std::u32string pattern;
+};
 } // namespace
 
 TufClient::TufClient(Transport &source, const CryptoProvider &verifier, fs::path trustedRoot,
@@ -194,9 +225,8 @@ Json TufClient::FetchMetadata(const std::string &filename, const Json *descripti
     return envelope;
 }
 
-void TufClient::RefreshTrustedMetadata(const Cancellation &cancel)
+void TufClient::LoadTrustedRoot()
 {
-    started = ParseUtc(UtcNow());
     auto initial = ReadJson(bootstrap);
     auto fingerprint = crypto.Hash(CanonicalJson(initial));
 
@@ -220,7 +250,39 @@ void TufClient::RefreshTrustedMetadata(const Cancellation &cancel)
                 root.at("signed").at("spec_version").get<std::string>().rfind("1.0.", 0) == 0,
             ErrorCode::trust, "Invalid cached root format");
     VerifyThreshold(crypto, root, root.at("signed").at("keys"), root.at("signed").at("roles").at("root"));
+}
 
+void TufClient::VerifyRootRotation(const Json &next, std::uint64_t expectedVersion) const
+{
+    VerifyThreshold(crypto, next, root.at("signed").at("keys"), root.at("signed").at("roles").at("root"));
+    VerifyThreshold(crypto, next, next.at("signed").at("keys"), next.at("signed").at("roles").at("root"));
+    Require(ReadMetadataVersion(next.at("signed")) == expectedVersion &&
+                next.at("signed").at("_type") == "root",
+            ErrorCode::trust, "Invalid root rotation");
+    Require(next.at("signed").at("spec_version").get<std::string>().rfind("1.0.", 0) == 0, ErrorCode::trust,
+            "Unsupported root format");
+}
+
+void TufClient::InvalidateRotatedRoleCaches(const Json &next) const
+{
+    for (const std::string role : {"timestamp", "snapshot"})
+    {
+        const auto &oldRole = root.at("signed").at("roles").at(role);
+        const auto &newRole = next.at("signed").at("roles").at(role);
+        bool changed = oldRole != newRole;
+        for (const auto &key : oldRole.at("keyids"))
+            if (!next.at("signed").at("keys").contains(key.get<std::string>()) ||
+                root.at("signed").at("keys").at(key.get<std::string>()) !=
+                    next.at("signed").at("keys").at(key.get<std::string>()))
+                changed = true;
+
+        if (changed)
+            fs::remove(state / (role + ".json"));
+    }
+}
+
+void TufClient::RotateTrustedRoot(const Cancellation &cancel)
+{
     for (unsigned count = 0;; ++count)
     {
         auto nextVersion = ReadMetadataVersion(root.at("signed")) + 1;
@@ -232,36 +294,17 @@ void TufClient::RefreshTrustedMetadata(const Cancellation &cancel)
 
         Require(count < 32, ErrorCode::trust, "Too many root rotations in one cycle");
         auto next = ParseJson(*bytes);
-        VerifyThreshold(crypto, next, root.at("signed").at("keys"), root.at("signed").at("roles").at("root"));
-        VerifyThreshold(crypto, next, next.at("signed").at("keys"), next.at("signed").at("roles").at("root"));
-        Require(ReadMetadataVersion(next.at("signed")) == nextVersion &&
-                    next.at("signed").at("_type") == "root",
-                ErrorCode::trust, "Invalid root rotation");
-        Require(next.at("signed").at("spec_version").get<std::string>().rfind("1.0.", 0) == 0,
-                ErrorCode::trust, "Unsupported root format");
+        VerifyRootRotation(next, nextVersion);
 
-        for (const std::string role : {"timestamp", "snapshot"})
-        {
-            const auto &oldRole = root.at("signed").at("roles").at(role);
-            const auto &newRole = next.at("signed").at("roles").at(role);
-            bool changed = oldRole != newRole;
-            for (const auto &key : oldRole.at("keyids"))
-                if (!next.at("signed").at("keys").contains(key.get<std::string>()) ||
-                    root.at("signed").at("keys").at(key.get<std::string>()) !=
-                        next.at("signed").at("keys").at(key.get<std::string>()))
-                    changed = true;
-
-            if (changed)
-                fs::remove(state / (role + ".json"));
-        }
+        InvalidateRotatedRoleCaches(next);
 
         root = next;
         WriteJson(state / "root.json", root);
     }
+}
 
-    Require(ParseUtc(root.at("signed").at("expires")) > started, ErrorCode::expired,
-            "Trusted root expired; explicit out-of-band recovery is required");
-
+Json TufClient::RefreshTimestamp(const Cancellation &cancel)
+{
     const auto &authority = root.at("signed");
     auto timestamp = FetchMetadata("timestamp.json", nullptr, cancel);
     VerifyThreshold(crypto, timestamp, authority.at("keys"), authority.at("roles").at("timestamp"));
@@ -274,7 +317,14 @@ void TufClient::RefreshTrustedMetadata(const Cancellation &cancel)
                 ErrorCode::rollback, "Snapshot reference rollback");
     WriteJson(state / "timestamp.json", timestamp);
 
-    snapshot = FetchMetadata("snapshot.json", &snapshotDescription, cancel);
+    return timestamp;
+}
+
+void TufClient::RefreshSnapshot(const Json &description, const Cancellation &cancel)
+{
+    const auto &authority = root.at("signed");
+
+    snapshot = FetchMetadata("snapshot.json", &description, cancel);
     VerifyThreshold(crypto, snapshot, authority.at("keys"), authority.at("roles").at("snapshot"));
     VerifyMetadata(snapshot, "snapshot", "snapshot.json");
     if (fs::exists(state / "snapshot.json"))
@@ -287,11 +337,85 @@ void TufClient::RefreshTrustedMetadata(const Cancellation &cancel)
                     ErrorCode::rollback, "Targets reference removed or rolled back");
     }
     WriteJson(state / "snapshot.json", snapshot);
+}
+
+void TufClient::RefreshTargets(const Cancellation &cancel)
+{
+    const auto &authority = root.at("signed");
 
     targets = FetchMetadata("targets.json", &snapshot.at("signed").at("meta").at("targets.json"), cancel);
     VerifyThreshold(crypto, targets, authority.at("keys"), authority.at("roles").at("targets"));
     VerifyMetadata(targets, "targets", "targets.json");
     WriteJson(state / "targets.json", targets);
+}
+
+void TufClient::RefreshTrustedMetadata(const Cancellation &cancel)
+{
+    started = ParseUtc(UtcNow());
+
+    LoadTrustedRoot();
+    RotateTrustedRoot(cancel);
+    Require(ParseUtc(root.at("signed").at("expires")) > started, ErrorCode::expired,
+            "Trusted root expired; explicit out-of-band recovery is required");
+
+    const auto timestamp = RefreshTimestamp(cancel);
+    RefreshSnapshot(timestamp.at("signed").at("meta").at("snapshot.json"), cancel);
+    RefreshTargets(cancel);
+}
+
+Target TufClient::ReadTargetDescriptor(const std::string &path, const Json &file)
+{
+    Require(file.at("length").is_number_unsigned() ||
+                (file.at("length").is_number_integer() && file.at("length").get<std::int64_t>() >= 0),
+            ErrorCode::trust, "Invalid target size");
+    Require(file.at("hashes").contains("sha256"), ErrorCode::unsupported,
+            "This profile requires SHA-256 targets");
+    return Target{path, file.at("length").get<std::uint64_t>(), file.at("hashes"),
+                  file.value("custom", Json::object())};
+}
+
+bool TufClient::DelegationMatchesPath(const Json &role, const std::string &path) const
+{
+    bool match = false;
+
+    Require(role.contains("paths") != role.contains("path_hash_prefixes"), ErrorCode::trust,
+            "Ambiguous delegation scope");
+    if (role.contains("paths"))
+        for (const auto &pattern : role.at("paths"))
+            match = match || DelegatedPathPattern(pattern).Matches(path);
+    else
+    {
+        auto hash = crypto.Hash(path);
+        for (const auto &prefix : role.at("path_hash_prefixes"))
+            match = match || hash.rfind(prefix.get<std::string>(), 0) == 0;
+    }
+
+    return match;
+}
+
+std::string TufClient::ValidateDelegatedRoleName(const Json &role)
+{
+    auto name = role.at("name").get<std::string>();
+    SafeRelative(name);
+    Require(name.find('/') == std::string::npos && name != "root" && name != "snapshot" &&
+                name != "timestamp" && name != "targets",
+            ErrorCode::trust, "Unsafe delegated role name");
+
+    return name;
+}
+
+Json TufClient::FetchAndCacheDelegatedMetadata(const std::string &name, const Json &role, const Json &keys,
+                                               const Cancellation &cancel)
+{
+    const auto &description = snapshot.at("signed").at("meta").at(name + ".json");
+    auto child = FetchMetadata(name + ".json", &description, cancel);
+
+    VerifyThreshold(crypto, child, keys, role);
+    auto cacheName = "delegated/" + crypto.Hash(name) + ".json";
+    VerifyMetadata(child, "targets", cacheName);
+    WriteJson(state / cacheName, child);
+
+    return child;
 }
 
 std::optional<Target> TufClient::FindDelegatedTarget(const Json &metadata, const std::string &path,
@@ -304,14 +428,7 @@ std::optional<Target> TufClient::FindDelegatedTarget(const Json &metadata, const
 
     if (body.at("targets").contains(path))
     {
-        const auto &file = body.at("targets").at(path);
-        Require(file.at("length").is_number_unsigned() ||
-                    (file.at("length").is_number_integer() && file.at("length").get<std::int64_t>() >= 0),
-                ErrorCode::trust, "Invalid target size");
-        Require(file.at("hashes").contains("sha256"), ErrorCode::unsupported,
-                "This profile requires SHA-256 targets");
-        return Target{path, file.at("length").get<std::uint64_t>(), file.at("hashes"),
-                      file.value("custom", Json::object())};
+        return ReadTargetDescriptor(path, body.at("targets").at(path));
     }
 
     if (!body.contains("delegations"))
@@ -323,39 +440,15 @@ std::optional<Target> TufClient::FindDelegatedTarget(const Json &metadata, const
 
     for (const auto &role : delegations.at("roles"))
     {
-        bool match = false;
-
-        Require(role.contains("paths") != role.contains("path_hash_prefixes"), ErrorCode::trust,
-                "Ambiguous delegation scope");
-        if (role.contains("paths"))
-            for (const auto &pattern : role.at("paths"))
-                match = match || MatchesDelegatedPath(pattern, path);
-        else
-        {
-            auto hash = crypto.Hash(path);
-            for (const auto &prefix : role.at("path_hash_prefixes"))
-                match = match || hash.rfind(prefix.get<std::string>(), 0) == 0;
-        }
-
-        if (!match)
+        if (!DelegationMatchesPath(role, path))
             continue;
 
-        auto name = role.at("name").get<std::string>();
-        SafeRelative(name);
-        Require(name.find('/') == std::string::npos && name != "root" && name != "snapshot" &&
-                    name != "timestamp" && name != "targets",
-                ErrorCode::trust, "Unsafe delegated role name");
+        const auto name = ValidateDelegatedRoleName(role);
 
         if (visited.insert(name).second)
         {
             ++delegatedCount;
-            const auto &description = snapshot.at("signed").at("meta").at(name + ".json");
-            auto child = FetchMetadata(name + ".json", &description, cancel);
-
-            VerifyThreshold(crypto, child, delegations.at("keys"), role);
-            auto cacheName = "delegated/" + crypto.Hash(name) + ".json";
-            VerifyMetadata(child, "targets", cacheName);
-            WriteJson(state / cacheName, child);
+            const auto child = FetchAndCacheDelegatedMetadata(name, role, delegations.at("keys"), cancel);
 
             auto found = FindDelegatedTarget(child, path, cancel, visited, depth + 1, terminated);
             if (found)
@@ -398,9 +491,9 @@ void TufClient::DownloadAndVerifyTarget(const Target &target, const fs::path &de
     auto path = SafeRelative(target.path);
     if (root.at("signed").value("consistent_snapshot", false))
         path = path.parent_path() /
-               (target.hashes.at("sha256").get<std::string>() + "." + path.filename().string());
+               fs::u8path(target.hashes.at("sha256").get<std::string>() + "." + path.filename().u8string());
 
-    transport.Download("targets/" + path.generic_string(), destination, target.length, cancel);
+    transport.Download("targets/" + path.generic_u8string(), destination, target.length, cancel);
 
     Require(fs::file_size(destination) == target.length, ErrorCode::trust, "Target size mismatch");
     for (auto it = target.hashes.begin(); it != target.hashes.end(); ++it)

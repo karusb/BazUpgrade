@@ -12,6 +12,11 @@ class PortableInstaller final : public Installer
                         const Cancellation &cancel) override;
 
   private:
+    static void ValidateCompletedVersion(const fs::path &directory, const fs::path &entrypoint,
+                                         const std::string &hash);
+    static void CommitExtractedVersion(const fs::path &root, const fs::path &directory,
+                                       const fs::path &entrypoint, const std::string &hash);
+
     std::uint64_t maxBytes;
     std::uint64_t maxEntries;
 };

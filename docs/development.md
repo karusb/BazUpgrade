@@ -15,6 +15,8 @@ Release workflow preset: cmake --workflow --preset release. Windows CI uses the 
 
 Python test suites exercise CLI/C ABI, local HTTP and the official TUF client. BAZUPGRADE_REQUIRE_REFERENCE_TUF=1 makes missing interoperability support fail instead of skipping. Keys and applications are generated in isolated synthetic directories.
 
+Native scenarios use GoogleTest fixtures. Shared setup owns temporary directories and signing state; each test separates preparation, execution and assertions. GoogleTest is fetched only with `BUILD_TESTING=ON` and is not installed with the SDK. Set `GTEST_FILTER` to select native scenarios while retaining the `bazupgrade.behavior` CTest entry point. Every executable with a custom C++ entry point continues to use BazPO.
+
 ## Independent builds
 
 ~~~mermaid

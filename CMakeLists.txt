@@ -33,6 +33,7 @@ add_library(bazupgrade STATIC
     util/Json.cpp util/ControlChannel.cpp crypto/OpenSslCrypto.cpp storage/FileLock.cpp storage/MetadataDirectory.cpp
     curl/RepositoryTransport.cpp tuf/TufClient.cpp
     controllers/PortableInstaller.cpp controllers/NativeInstaller.cpp controllers/UpdateClient.cpp
+    controllers/detail/PortableArchiveReader.cpp controllers/detail/PortableArchiveWriter.cpp
     publishing/RepositoryPublisher.cpp)
 add_library(BazUpgrade::Core ALIAS bazupgrade)
 set_target_properties(bazupgrade PROPERTIES EXPORT_NAME Core OUTPUT_NAME bazupgrade-core POSITION_INDEPENDENT_CODE ON)
@@ -84,18 +85,12 @@ if(WIN32)
 endif()
 if(BUILD_TESTING)
     find_package(Python3 REQUIRED COMPONENTS Interpreter)
-    add_executable(bazupgrade_tests tests/BehaviorTest.cpp tests/TrustTest.cpp tests/EngineTest.cpp)
-    add_executable(native_installer_fixture tests/InstallerFixture.cpp)
-    target_link_libraries(native_installer_fixture PRIVATE BazPO::BazPO)
-    target_link_libraries(bazupgrade_tests PRIVATE bazupgrade BazPO::BazPO)
-    add_test(NAME bazupgrade.behavior COMMAND bazupgrade_tests)
-    add_test(NAME bazupgrade.cli COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_test.py $<TARGET_FILE:bazupgrade_cli> $<TARGET_FILE:BazUpgradePublisher> $<TARGET_FILE:bazupgrade_sdk> $<TARGET_FILE:native_installer_fixture>)
-    set_tests_properties(bazupgrade.cli PROPERTIES TIMEOUT 120)
+    add_subdirectory(tests)
 endif()
 
 install(TARGETS bazupgrade EXPORT BazUpgradeTargets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 install(TARGETS bazupgrade_cli BazUpgradePublisher bazupgrade_sdk RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(DIRECTORY interfaces util crypto storage tuf controllers curl publishing DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/bazupgrade FILES_MATCHING PATTERN "*.hpp" PATTERN test EXCLUDE PATTERN ToolCli.hpp EXCLUDE PATTERN ProcessId.hpp EXCLUDE PATTERN WindowsProcess.hpp EXCLUDE PATTERN WindowsSigning.hpp EXCLUDE)
+install(DIRECTORY interfaces util crypto storage tuf controllers curl publishing DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/bazupgrade FILES_MATCHING PATTERN "*.hpp" PATTERN detail EXCLUDE PATTERN test EXCLUDE PATTERN ToolCli.hpp EXCLUDE PATTERN ProcessId.hpp EXCLUDE PATTERN WindowsProcess.hpp EXCLUDE PATTERN WindowsSigning.hpp EXCLUDE)
 install(FILES sdk/bazupgrade.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/bazupgrade)
 install(DIRECTORY sdk/include/bazupgrade DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/include/interfaces/Version.hpp DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/bazupgrade/interfaces)

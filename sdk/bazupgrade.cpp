@@ -10,6 +10,28 @@ struct baz_client
     {
     }
 
+    baz::Json RunUpdateCommand(const std::string &action, const std::string &parameter)
+    {
+        if (action == "check")
+            return client.CheckForUpdate(cancellation);
+        else if (action == "apply")
+            return client.ApplyUpdate(cancellation, parameter.empty() ? 0 : baz::ProcessId(parameter));
+        else if (action == "status")
+            return client.ReadInstallationState();
+        else if (action == "verify")
+            return client.VerifyDownloadedFile(baz::fs::u8path(parameter), cancellation);
+        else if (action == "rollback")
+            return client.RollbackPortableInstallation();
+        else if (action == "reconcile")
+        {
+            baz::Require(parameter == "true" || parameter == "false", baz::ErrorCode::invalidInput,
+                         "Reconciliation requires true or false");
+            return client.ReconcileInstallationOutcome(parameter == "true");
+        }
+        else
+            throw baz::Error(baz::ErrorCode::invalidInput, "Unknown SDK command");
+    }
+
     baz::UpdateClient client;
     baz::Cancellation cancellation;
     std::atomic_flag busy = ATOMIC_FLAG_INIT;
@@ -92,29 +114,7 @@ extern "C"
         try
         {
             handle->cancellation.requested = false;
-            const std::string action(command);
-            const std::string parameter = argument ? argument : "";
-            baz::Json value;
-
-            if (action == "check")
-                value = handle->client.CheckForUpdate(handle->cancellation);
-            else if (action == "apply")
-                value = handle->client.ApplyUpdate(handle->cancellation,
-                                                   parameter.empty() ? 0 : baz::ProcessId(parameter));
-            else if (action == "status")
-                value = handle->client.ReadInstallationState();
-            else if (action == "verify")
-                value = handle->client.VerifyDownloadedFile(baz::fs::u8path(parameter), handle->cancellation);
-            else if (action == "rollback")
-                value = handle->client.RollbackPortableInstallation();
-            else if (action == "reconcile")
-            {
-                baz::Require(parameter == "true" || parameter == "false", baz::ErrorCode::invalidInput,
-                             "Reconciliation requires true or false");
-                value = handle->client.ReconcileInstallationOutcome(parameter == "true");
-            }
-            else
-                throw baz::Error(baz::ErrorCode::invalidInput, "Unknown SDK command");
+            const auto value = handle->RunUpdateCommand(command, argument ? argument : "");
 
             AllocateJsonResult(result, value);
 

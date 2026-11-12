@@ -41,9 +41,29 @@ class UpdateClient
     Json RollbackPortableInstallation();
 
   private:
+    void ValidateConfiguration() const;
+    void InitializeBackends();
     Target ResolveTrustedTarget(const Cancellation &cancel);
+    void ValidateTargetPolicy(const Target &target) const;
+    void RecordTrustedTarget(const Target &target);
     Json LoadInstallationState() const;
     void ValidateInstallationState(const Json &state) const;
+    void SaveInstallationState(const Json &state) const;
+
+    void EnsureInstallationOwnership() const;
+    bool IsInstalledRelease(const Target &target, const Json &state) const;
+    fs::path GetArtifactCachePath(const Target &target) const;
+    void RecordPendingDownload(Json &state, const Target &target) const;
+    void DownloadOrVerifyCachedArtifact(const Target &target, const fs::path &artifact,
+                                        const Cancellation &cancel);
+    static void NotifyReadyAndWaitForExit(const Cancellation &cancel, std::uint64_t waitPid,
+                                          const std::function<void()> &ready);
+    void RecordCompletedInstallation(Json &state, const Target &target, const InstallResult &result) const;
+
+    void AcceptPendingInstallation(Json &state) const;
+    void DiscardPendingInstallation(const Json &state) const;
+    void RemovePartialDownloads(const std::string &hash) const;
+    void RemoveInactiveStaging(const Json &state, const std::string &hash) const;
 
     ClientConfig config;
     std::unique_ptr<CryptoProvider> crypto;

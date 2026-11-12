@@ -24,6 +24,18 @@ class TufClient
                                               const Cancellation &cancel, std::set<std::string> &visited,
                                               unsigned depth, bool &terminated);
     void RefreshTrustedMetadata(const Cancellation &cancel);
+    void LoadTrustedRoot();
+    void RotateTrustedRoot(const Cancellation &cancel);
+    void VerifyRootRotation(const Json &next, std::uint64_t expectedVersion) const;
+    void InvalidateRotatedRoleCaches(const Json &next) const;
+    Json RefreshTimestamp(const Cancellation &cancel);
+    void RefreshSnapshot(const Json &description, const Cancellation &cancel);
+    void RefreshTargets(const Cancellation &cancel);
+    bool DelegationMatchesPath(const Json &role, const std::string &path) const;
+    static std::string ValidateDelegatedRoleName(const Json &role);
+    static Target ReadTargetDescriptor(const std::string &path, const Json &description);
+    Json FetchAndCacheDelegatedMetadata(const std::string &name, const Json &role, const Json &keys,
+                                        const Cancellation &cancel);
 
     Transport &transport;
     const CryptoProvider &crypto;

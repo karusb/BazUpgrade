@@ -2,27 +2,27 @@
 
 This records observed local checks for the v2 review changes. A configured workflow is not an executed workflow. No live GitHub Actions run, release tag or public release was created; commits use [skip ci].
 
-The option-limit follow-up reran all 117 BazPO tests on Windows and Linux, plus the Windows CurlWrapper HTTP suite and BazUpgrade native/CLI/reference-TUF suites. The signing/reboot E2E and other platform results below describe the earlier v2 baseline; they were not rerun for this parser change.
+The current refactor (2026-11-13) separates installation orchestration, journal transitions, artifact verification, TUF refresh stages, publisher checkpoint construction and private archive ownership. Public CLI commands and C ABI entry points retain their contracts. CurlWrapper remains an independently installed SDK; no private library source is checked out or distributed by BazUpgrade.
 
-The current repository-isolation follow-up (2026-11-12) removes consumer workflows/documentation from CurlWrapper. Its existing four-method `HTTPClient` contract is retained; generic typed GET/POST, bounded/cancellable stream download and raw URL-path appending are implemented in the library itself. BazUpgrade calls that API directly without HTTP-client subclasses, injected client implementations, stream-writing adapters or its own percent encoder. Its TUF/application policies remain in BazUpgrade.
+Native tests now use GoogleTest scenarios and reusable fixtures. The previous 38 Windows / 36 Linux scenarios passed after the framework migration and before production refactoring. Shared fixture implementations moved out of headers; temporary files/directories, HTTP servers and C ABI result buffers have explicit ownership. CurlWrapper, Node and Python E2E tests separate setup, operations and assertions.
 
-The naming/readability follow-up uses `SendRequest` for custom HTTP requests and explicit C++ update operations such as `CheckForUpdate`, `ApplyUpdate` and `ReconcileInstallationOutcome`. Calls, tests and integration examples use the new names. Both projects separate function definitions through clang-format 18 and group declarations, validation and transfer/state operations inside functions. CLI commands and C ABI names are unchanged. The Windows/Linux build and behavior checks described immediately below were rerun after these changes; the instrumentation percentages and native signing/reboot evidence later in this document remain earlier baseline results.
+Current results: CurlWrapper passed **37 unit tests and 18 loopback E2E cases** on Windows and Linux, including Linux address/undefined-behavior sanitizers with leak detection. BazUpgrade passed **52 native scenarios on Windows and 50 on Linux**. The added cases exercise cancellation after readiness, unknown installer outcomes without replay, explicit reboot reconciliation, extraction quota boundaries and delegated path matching. A new Windows regression exposed code-page-dependent filesystem conversions; UTF-8 target publication, download, installation and file reads now pass without requiring the host application to select a UTF-8 code page.
 
-CurlWrapper passed 32 GoogleTest unit tests and 13 loopback E2E cases on Windows and Linux, plus Linux address/undefined-behavior sanitizers with leak detection. The URL/refactor follow-up delegates path escaping to libcurl's URL API, separates request validation/configuration/execution and centralizes legacy response handling. Regression checks cover raw UTF-8/reserved path bytes reaching a real loopback server, preserving existing escaped base paths and leaving caller output intact when concurrent use is rejected. Public headers compiled without backend headers/definitions; library-only builds required no test dependencies. CPack SDK ZIPs were generated and extracted to separate prefixes on both platforms. Independent consumers compiled and ran against those extracted SDKs, and BazUpgrade was rebuilt using the extracted SDK rather than a private source checkout.
+BazUpgrade's CLI/C ABI/HTTP/reference-TUF suite passed all 10 cases on Windows and 9 on Linux; the Windows native subprocess case is explicitly skipped on Linux. Six Node SDK tests passed. The Linux native suite passed ASan/UBSan with leak detection. Coverage below describes the current selected Linux core directories; native signing/reboot evidence later in this document remains an earlier baseline.
 
-BazUpgrade passed 38 native cases and all 10 CLI/reference-TUF cases on Windows; Linux passed 36 native cases and 9 CLI cases, with the Windows subprocess case explicitly skipped. Tests include UTF-8/space-containing HTTP target paths and cancellation/invalid-path rejection before creating download output. Six Node SDK tests passed. A separate installed Core SDK consumer compiled and ran on Linux. Fresh BazUpgrade ZIP/TGZ packages on both platforms executed their packaged tools and C ABI probe and passed private-source/header exclusion checks.
+Independent SDK consumers and fresh ZIP/TGZ packages were checked on Windows and Linux. Packaged tools and the C ABI probe executed successfully; packaging checks reject private CurlWrapper source, internal archive headers and native test headers. Library-only CurlWrapper builds require no Python or test dependencies. Public C++ headers continue to compile without backend curl headers/definitions.
 
-Independent workflow definitions passed actionlint. The actual SDK and release validator code, extracted from the committed workflow/action definitions, passed 39 local synthetic positive/negative cases, including source/run/attempt/platform mismatch, checksum mismatch and missing platform packages; composite shell steps passed Bash parsing. No hosted SDK download, token setup or Actions runner execution was verified. MSVC still reports the existing C++17 codecvt deprecation in `TufClient.cpp`. Hosted CI, macOS and native signing/reboot tests were not rerun; the signing/reboot evidence and broader platform tables below describe the earlier v2 baseline.
+Workflow definitions passed actionlint. The SDK/release validator code passed 39 local synthetic positive/negative cases in the repository-isolation review. No hosted Actions run, SDK token setup or macOS runner execution was verified. MSVC still reports the existing C++17 codecvt deprecation in the TUF path matcher. Native signing and reboot tests were not rerun for this refactor.
 
 ## Build and behavior
 
 | Check | Observed result |
 |---|---|
-| Windows x64 / MSVC 19.51 / CMake 3.31.6 | 35 C++ behavior cases passed |
-| Windows CLI / C ABI / loopback / official TUF 7.0.1 | 9 integration tests passed; reference interoperability required |
-| Linux / GCC 9 / CMake 3.31.6 | 33 C++ behavior cases and 9 integration tests passed |
+| Windows x64 / MSVC 19.51 / CMake 3.31.6 | 52 GoogleTest native cases passed |
+| Windows CLI / C ABI / loopback / official TUF 7.0.1 | 10 integration tests passed; reference interoperability required |
+| Linux / GCC 9 / CMake 3.31.6 | 50 GoogleTest native cases and 9 integration tests passed; one Windows-only skip |
 | Linux reference client | Local Python 3.8 environment used TUF 3.0 compatibility; current TUF 7.0.1 was checked separately on Windows |
-| BazPO | 117 regression tests passed on Windows and Linux, including per-option value limits, owned defaults and multiple translation units |
+| BazPO | Earlier parser baseline: 117 tests passed on Windows and Linux; unchanged in this refactor |
 | CurlWrapper | HTTP/cancellation/isolation/concurrency suite passed on Windows and Linux |
 | Node SDK | 6 tests passed |
 | Installed C++ SDK consumer | Compiled and ran on Windows and Linux |
@@ -36,13 +36,13 @@ Windows dependencies resolved by the committed vcpkg baseline include OpenSSL 3.
 
 ## Instrumentation
 
-Linux C++ coverage: **86.1% lines**, **92.0% functions**, **47.5% branches**. These percentages cover the selected core directories and Linux code paths, not Windows signing/installers, Node, rendering, native reboot or arbitrary target hardware.
+Linux C++ coverage: **87.6% lines**, **93.5% functions**, **48.4% branches**. These percentages cover the selected core directories and Linux code paths, not Windows signing/installers, Node, rendering, native reboot or arbitrary target hardware.
 
-The native behavior binary passed AddressSanitizer and UndefinedBehaviorSanitizer with leak detection enabled. clang-analyzer 10 inspected compiled Linux core translation units. It reported one BazPO constructor virtual-call warning: registration calls the concrete base flag implementation during base construction; derived dispatch is not expected there. This older analyzer and a warning review do not establish absence of vulnerabilities.
+The native behavior binary passed AddressSanitizer and UndefinedBehaviorSanitizer with leak detection enabled. In the earlier v2 baseline, clang-analyzer 10 inspected compiled Linux core translation units; that static analysis was not repeated for this refactor. It reported one BazPO constructor virtual-call warning: registration calls the concrete base flag implementation during base construction; derived dispatch is not expected there. This older analyzer and a warning review do not establish absence of vulnerabilities.
 
 ## Separate agent security review
 
-At the user's request, a second agent reviewed the code independently of implementation rationale. This was an agent review, not an external human audit or certification.
+At the user's request, a second agent reviewed the earlier v2 baseline independently of implementation rationale; that separate review was not repeated for this refactor. This was an agent review, not an external human audit or certification.
 
 | Confirmed finding | Remediation | Regression evidence |
 |---|---|---|

@@ -20,6 +20,7 @@ flowchart TB
 |---|---|
 | interfaces | Shared contracts and typed errors. No installer or crypto implementation dependencies. |
 | controllers | Application policy, operation ownership, portable and native installation. |
+| controllers/detail | Private archive reader/writer ownership, entry validation and bounded streaming; excluded from the installed SDK. |
 | tuf | Trusted metadata workflow and ordered delegation lookup. |
 | crypto | OpenSSL implementation and publisher signing helpers. |
 | curl | Repository path/status policy calling the independently installed HTTP client. |
@@ -27,6 +28,8 @@ flowchart TB
 | publishing | Repository lifecycle, signed publication, and compatibility feeds. |
 | sdk | C ABI, public C++ include, and Node integration. |
 | util | Strict JSON, canonical encoding, bounded reads, durable replacement, safe paths. |
+
+`UpdateClient` coordinates target policy, durable phase changes, verified artifact caching, readiness and installation. Each step has a named operation; exceptions leave the last persisted phase intact. `TufClient` refreshes root, timestamp, snapshot and targets in order, with separate signature, rollback and delegation checks. The publisher builds its signed checkpoint before making metadata visible and shares role-key generation between initialization and root rotation.
 
 ## Trust and scope
 

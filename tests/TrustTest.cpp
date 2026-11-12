@@ -1,343 +1,418 @@
 #include "storage/MetadataDirectory.hpp"
 #include "tests/TestSupport.hpp"
-#ifdef _WIN32
-#include <windows.h>
-#include <winioctl.h>
-#endif
+
 namespace test
 {
-void TrustTests()
+class TrustTest : public RepositoryTest
 {
-    Case("canonical JSON sorts keys and preserves UTF-8",
-         []
-         {
-             Check(CanonicalJson(ParseJson(R"({"z":1,"a":"line\nnext","b":true})")) ==
-                       std::string("{\"a\":\"line\nnext\",\"b\":true,\"z\":1}"),
-                   "Wrong canonical serialization");
-             Reject(ErrorCode::trust, [] { CanonicalJson(Json(1.5)); });
-             Reject(ErrorCode::trust, [] { ParseJson(R"({"a":1,"a":2})"); });
-         });
-    Case("Ed25519 known vector rejects changed messages",
-         []
-         {
-             OpenSslCrypto crypto;
-             Json key = {{"keytype", "ed25519"},
-                         {"scheme", "ed25519"},
-                         {"keyval",
-                          {{"public", "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"}}}};
-             std::string signature = "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821"
-                                     "590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b";
-             Check(crypto.Verify(key, "", signature), "RFC 8032 vector rejected");
-             Check(!crypto.Verify(key, "changed", signature), "Changed message accepted");
-         });
-    Case("signed publication resolves and downloads",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             DirectoryTransport transport(fixture.repo);
-             TufClient client(transport, fixture.crypto, fixture.bootstrap, fixture.root / "trust");
-             auto target = client.ResolveTarget(fixture.config.target, fixture.cancel);
-             Check(target.custom.at("releaseSequence") == 1, "Wrong release");
-             client.DownloadAndVerifyTarget(target, fixture.root / "download.zip", fixture.cancel);
-             Check(fixture.crypto.HashFile(fixture.root / "download.zip") ==
-                       fixture.crypto.HashFile(fixture.package),
-                   "Downloaded bytes changed");
-         });
-    Case("threshold signatures count unique authorized keys",
-         []
-         {
-             Fixture fixture;
-             auto envelope = ReadJson(fixture.bootstrap), body = envelope.at("signed");
-             envelope["signatures"] =
-                 Json::array({envelope.at("signatures").at(0), envelope.at("signatures").at(0)});
-             Reject(ErrorCode::trust,
-                    [&] {
-                        VerifyThreshold(fixture.crypto, envelope, body.at("keys"),
-                                        body.at("roles").at("root"));
-                    });
-         });
-    Case("changed signed body fails verification",
-         []
-         {
-             Fixture fixture;
-             auto envelope = ReadJson(fixture.bootstrap), authority = envelope.at("signed");
-             envelope["signed"]["expires"] = "2099-01-01T00:00:00Z";
-             Reject(ErrorCode::trust,
-                    [&] {
-                        VerifyThreshold(fixture.crypto, envelope, authority.at("keys"),
-                                        authority.at("roles").at("root"));
-                    });
-         });
-    Case("expired timestamp fails closed",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             auto timestamp = ReadJson(fixture.repo / "metadata/timestamp.json").at("signed");
-             timestamp["expires"] = "2000-01-01T00:00:00Z";
-             fixture.Resign("timestamp.json", timestamp, "timestamp");
-             UpdateClient client(fixture.config);
-             Reject(ErrorCode::expired, [&] { client.CheckForUpdate(fixture.cancel); });
-         });
-    Case("metadata version rollback survives a new client",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             auto old = ReadJson(fixture.repo / "metadata/timestamp.json");
-             UpdateClient(fixture.config).CheckForUpdate(fixture.cancel);
-             fixture.Publish(2);
-             UpdateClient(fixture.config).CheckForUpdate(fixture.cancel);
-             WriteJson(fixture.repo / "metadata/timestamp.json", old);
-             Reject(ErrorCode::rollback,
-                    [&] { UpdateClient(fixture.config).CheckForUpdate(fixture.cancel); });
-         });
-    Case("metadata cannot change at the same version",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             UpdateClient(fixture.config).CheckForUpdate(fixture.cancel);
-             auto timestamp = ReadJson(fixture.repo / "metadata/timestamp.json").at("signed");
-             timestamp["expires"] = "2099-01-01T00:00:00Z";
-             fixture.Resign("timestamp.json", timestamp, "timestamp");
-             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).CheckForUpdate(fixture.cancel); });
-         });
-    Case("root rotation works from the original bootstrap",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             UpdateClient(fixture.config).CheckForUpdate(fixture.cancel);
-             RepositoryPublisher(fixture.repo, fixture.keys).RotateRoot();
-             Check(UpdateClient(fixture.config).CheckForUpdate(fixture.cancel).at("status") ==
-                       "updateAvailable",
-                   "Rotation lost target");
-             Check(ReadJson(fixture.config.stateDirectory / "trust/root.json").at("signed").at("version") ==
-                       2,
-                   "New root was not persisted");
-         });
-    Case("corrupted artifact is rejected before extraction",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             auto target = ReadJson(fixture.repo / "metadata/targets.json")
-                               .at("signed")
-                               .at("targets")
-                               .at(fixture.config.target);
-             auto path = fixture.repo / "targets" /
-                         (target.at("hashes").at("sha256").get<std::string>() + "." + fixture.config.target);
-             auto bytes = ReadFile(path);
-             bytes[0] ^= 1;
-             Bytes(path, bytes);
-             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).ApplyUpdate(fixture.cancel); });
-             Check(!fs::exists(fixture.config.installDirectory / "versions"),
-                   "Unverified archive was extracted");
-         });
-    Case("missing target is a controlled error",
-         []
-         {
-             Fixture fixture;
-             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).CheckForUpdate(fixture.cancel); });
-         });
-    Case("delegated role cache cannot alias the trusted root",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             fixture.Delegate("ROOT", "ex[a-z]mple.?ip", false, true);
-             auto original = ReadJson(fixture.bootstrap);
-             UpdateClient(fixture.config).CheckForUpdate(fixture.cancel);
-             auto trust = fixture.config.stateDirectory / "trust";
-             Check(ReadJson(trust / "root.json") == original, "Delegation replaced trust root");
-             Check(fs::exists(trust / "delegated" / (fixture.crypto.Hash("ROOT") + ".json")),
-                   "Delegated cache is not isolated");
-             UpdateClient(fixture.config).CheckForUpdate(fixture.cancel);
-         });
-    Case("terminating bracket delegation stops later roles",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             fixture.Delegate("first", "ex[!0-9]mple.*", true, false);
-             fixture.Delegate("later", "*", false, false);
-             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).CheckForUpdate(fixture.cancel); });
-             Check(!fs::exists(fixture.config.stateDirectory / "trust/delegated" /
-                               (fixture.crypto.Hash("later") + ".json")),
-                   "Terminated traversal visited a later role");
-         });
-    Case("publisher keeps keys outside the web root",
-         []
-         {
-             Fixture fixture;
-             Reject(ErrorCode::invalidInput,
-                    [&] { RepositoryPublisher invalid(fixture.repo, fixture.repo / "keys"); });
-         });
-    Case("publisher rejects replayed metadata and restores protected publication",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             std::vector<Json> old;
-             for (const std::string role : {"targets", "snapshot", "timestamp"})
-                 old.push_back(ReadJson(fixture.repo / "metadata" / (role + ".json")));
-             fixture.Publish(2);
-             auto checkpoint = ReadJson(fixture.keys / "publication.json");
-             unsigned index = 0;
-             for (const std::string role : {"targets", "snapshot", "timestamp"})
-                 WriteJson(fixture.repo / "metadata" / (role + ".json"), old.at(index++));
-             for (unsigned attempt = 0; attempt < 4; ++attempt)
-                 Reject(ErrorCode::rollback,
-                        [&] { RepositoryPublisher(fixture.repo, fixture.keys).Refresh(); });
-             Check(ReadJson(fixture.keys / "publication.json") == checkpoint,
-                   "Rejected replay changed signing state");
-             RepositoryPublisher(fixture.repo, fixture.keys).RestoreMetadata();
-             Check(UpdateClient(fixture.config).CheckForUpdate(fixture.cancel).at("releaseSequence") == 2,
-                   "Restoration lost the latest release");
-         });
+};
+
+TEST(TrustValidationTest, CanonicalJSONSortsKeysAndPreservesUTF8)
+{
+    const auto value = ParseJson(R"({"z":1,"a":"line\nnext","b":true})");
+
+    EXPECT_EQ(std::string("{\"a\":\"line\nnext\",\"b\":true,\"z\":1}"), CanonicalJson(value));
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::trust, [] { CanonicalJson(Json(1.5)); }));
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::trust, [] { ParseJson(R"({"a":1,"a":2})"); }));
+}
+
+TEST(TrustValidationTest, Ed25519KnownVectorRejectsChangedMessages)
+{
+    OpenSslCrypto crypto;
+    Json key = {{"keytype", "ed25519"},
+                {"scheme", "ed25519"},
+                {"keyval", {{"public", "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"}}}};
+    std::string signature = "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821"
+                            "590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b";
+
+    ASSERT_TRUE(crypto.Verify(key, "", signature)) << "RFC 8032 vector rejected";
+
+    EXPECT_FALSE(crypto.Verify(key, "changed", signature)) << "Changed message accepted";
+}
+
+TEST_F(TrustTest, SignedPublicationResolvesAndDownloads)
+{
+    repository.PublishApplicationRelease();
+
+    DirectoryTransport transport(repository.repo);
+    TufClient client(transport, repository.crypto, repository.bootstrap, repository.root / "trust");
+
+    auto target = client.ResolveTarget(repository.config.target, repository.cancel);
+    client.DownloadAndVerifyTarget(target, repository.root / "download.zip", repository.cancel);
+
+    EXPECT_EQ(1, target.custom.at("releaseSequence"));
+
+    EXPECT_EQ(repository.crypto.HashFile(repository.package),
+              repository.crypto.HashFile(repository.root / "download.zip"));
+}
+
+TEST_F(TrustTest, ThresholdSignaturesCountUniqueAuthorizedKeys)
+{
+    auto envelope = ReadJson(repository.bootstrap);
+    const auto body = envelope.at("signed");
+
+    envelope["signatures"] = Json::array({envelope.at("signatures").at(0), envelope.at("signatures").at(0)});
+
+    ASSERT_TRUE(FailsWithUpdateError(
+        ErrorCode::trust,
+        [&] { VerifyThreshold(repository.crypto, envelope, body.at("keys"), body.at("roles").at("root")); }));
+}
+
+TEST_F(TrustTest, ChangedSignedBodyFailsVerification)
+{
+    auto envelope = ReadJson(repository.bootstrap);
+    const auto authority = envelope.at("signed");
+
+    envelope["signed"]["expires"] = "2099-01-01T00:00:00Z";
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::trust,
+                                     [&] {
+                                         VerifyThreshold(repository.crypto, envelope, authority.at("keys"),
+                                                         authority.at("roles").at("root"));
+                                     }));
+}
+
+TEST_F(TrustTest, ExpiredTimestampFailsClosed)
+{
+    repository.PublishApplicationRelease();
+
+    auto timestamp = ReadJson(repository.repo / "metadata/timestamp.json").at("signed");
+
+    timestamp["expires"] = "2000-01-01T00:00:00Z";
+    repository.WriteSignedMetadata("timestamp.json", timestamp, "timestamp");
+    UpdateClient client(repository.config);
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::expired, [&] { client.CheckForUpdate(repository.cancel); }));
+}
+
+TEST_F(TrustTest, MetadataVersionRollbackSurvivesANewClient)
+{
+    repository.PublishApplicationRelease();
+
+    auto old = ReadJson(repository.repo / "metadata/timestamp.json");
+
+    UpdateClient(repository.config).CheckForUpdate(repository.cancel);
+    repository.PublishApplicationRelease(2);
+
+    UpdateClient(repository.config).CheckForUpdate(repository.cancel);
+    WriteJson(repository.repo / "metadata/timestamp.json", old);
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::rollback, [&]
+                                     { UpdateClient(repository.config).CheckForUpdate(repository.cancel); }));
+}
+
+TEST_F(TrustTest, MetadataCannotChangeAtTheSameVersion)
+{
+    repository.PublishApplicationRelease();
+
+    UpdateClient(repository.config).CheckForUpdate(repository.cancel);
+    auto timestamp = ReadJson(repository.repo / "metadata/timestamp.json").at("signed");
+
+    timestamp["expires"] = "2099-01-01T00:00:00Z";
+    repository.WriteSignedMetadata("timestamp.json", timestamp, "timestamp");
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::trust, [&]
+                                     { UpdateClient(repository.config).CheckForUpdate(repository.cancel); }));
+}
+
+TEST_F(TrustTest, RootRotationWorksFromTheOriginalBootstrap)
+{
+    repository.PublishApplicationRelease();
+
+    UpdateClient(repository.config).CheckForUpdate(repository.cancel);
+    RepositoryPublisher(repository.repo, repository.keys).RotateRoot();
+
+    ASSERT_EQ("updateAvailable",
+              UpdateClient(repository.config).CheckForUpdate(repository.cancel).at("status"))
+        << "Rotation lost target";
+
+    ASSERT_EQ(2, ReadJson(repository.config.stateDirectory / "trust/root.json").at("signed").at("version"))
+        << "New root was not persisted";
+}
+
+TEST_F(TrustTest, CorruptedArtifactIsRejectedBeforeExtraction)
+{
+    repository.PublishApplicationRelease();
+
+    auto target = ReadJson(repository.repo / "metadata/targets.json")
+                      .at("signed")
+                      .at("targets")
+                      .at(repository.config.target);
+    auto path = repository.repo / "targets" /
+                (target.at("hashes").at("sha256").get<std::string>() + "." + repository.config.target);
+    auto bytes = ReadFile(path);
+
+    bytes[0] ^= 1;
+    WriteFixtureFile(path, bytes);
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::trust, [&]
+                                     { UpdateClient(repository.config).ApplyUpdate(repository.cancel); }));
+
+    ASSERT_FALSE(fs::exists(repository.config.installDirectory / "versions"))
+        << "Unverified archive was extracted";
+}
+
+TEST_F(TrustTest, MissingTargetIsAControlledError)
+{
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::trust, [&]
+                                     { UpdateClient(repository.config).CheckForUpdate(repository.cancel); }));
+}
+
+TEST_F(TrustTest, DelegatedRoleCacheCannotAliasTheTrustedRoot)
+{
+    repository.PublishApplicationRelease();
+
+    repository.AddDelegatedRole("ROOT", "ex[a-z]mple.?ip", false, true);
+    auto original = ReadJson(repository.bootstrap);
+
+    UpdateClient(repository.config).CheckForUpdate(repository.cancel);
+    auto trust = repository.config.stateDirectory / "trust";
+
+    ASSERT_EQ(original, ReadJson(trust / "root.json")) << "Delegation replaced trust root";
+
+    ASSERT_TRUE(fs::exists(trust / "delegated" / (repository.crypto.Hash("ROOT") + ".json")))
+        << "Delegated cache is not isolated";
+    UpdateClient(repository.config).CheckForUpdate(repository.cancel);
+}
+
+TEST_F(TrustTest, TerminatingBracketDelegationStopsLaterRoles)
+{
+    repository.PublishApplicationRelease();
+
+    repository.AddDelegatedRole("first", "ex[!0-9]mple.*", true, false);
+    repository.AddDelegatedRole("later", "*", false, false);
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::trust, [&]
+                                     { UpdateClient(repository.config).CheckForUpdate(repository.cancel); }));
+
+    ASSERT_FALSE(fs::exists(repository.config.stateDirectory / "trust/delegated" /
+                            (repository.crypto.Hash("later") + ".json")))
+        << "Terminated traversal visited a later role";
+}
+
+TEST_F(TrustTest, PublisherKeepsKeysOutsideTheWebRoot)
+{
+
+    ASSERT_TRUE(
+        FailsWithUpdateError(ErrorCode::invalidInput, [&]
+                             { RepositoryPublisher invalid(repository.repo, repository.repo / "keys"); }));
+}
+
+TEST_F(TrustTest, PublisherRejectsReplayedMetadataAndRestoresProtectedPublication)
+{
+    repository.PublishApplicationRelease();
+
+    std::vector<Json> old;
+
+    for (const std::string role : {"targets", "snapshot", "timestamp"})
+        old.push_back(ReadJson(repository.repo / "metadata" / (role + ".json")));
+
+    repository.PublishApplicationRelease(2);
+
+    auto checkpoint = ReadJson(repository.keys / "publication.json");
+    unsigned index = 0;
+
+    for (const std::string role : {"targets", "snapshot", "timestamp"})
+        WriteJson(repository.repo / "metadata" / (role + ".json"), old.at(index++));
+
+    for (unsigned attempt = 0; attempt < 4; ++attempt)
+        ASSERT_TRUE(FailsWithUpdateError(
+            ErrorCode::rollback, [&] { RepositoryPublisher(repository.repo, repository.keys).Refresh(); }));
+
+    ASSERT_EQ(checkpoint, ReadJson(repository.keys / "publication.json"))
+        << "Rejected replay changed signing state";
+
+    RepositoryPublisher(repository.repo, repository.keys).RestoreMetadata();
+
+    ASSERT_EQ(2, UpdateClient(repository.config).CheckForUpdate(repository.cancel).at("releaseSequence"))
+        << "Restoration lost the latest release";
+}
+
 #ifdef _WIN32
-    Case("publisher rejects Windows case aliases inside its served root",
-         []
-         {
-             Fixture fixture;
-             auto alias = fixture.repo.parent_path() / "REPOSITORY" / "private-nested";
-             Reject(ErrorCode::invalidInput, [&] { RepositoryPublisher invalid(fixture.repo, alias); });
-             Check(!fs::exists(alias), "Rejected key directory was created");
-         });
+TEST_F(TrustTest, PublisherRejectsWindowsCaseAliasesInsideItsServedRoot)
+{
+    auto alias = repository.repo.parent_path() / "REPOSITORY" / "private-nested";
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::invalidInput,
+                                     [&] { RepositoryPublisher invalid(repository.repo, alias); }));
+
+    ASSERT_FALSE(fs::exists(alias)) << "Rejected key directory was created";
+}
+
 #endif
-    Case("publisher refuses independent snapshot and timestamp replays",
-         []
-         {
-             for (const std::string role : {"snapshot", "timestamp"})
-             {
-                 Fixture fixture;
-                 fixture.Publish();
-                 auto path = fixture.repo / "metadata" / (role + ".json");
-                 auto previous = ReadJson(path);
-                 fixture.Publish(2);
-                 auto protectedState = ReadJson(fixture.keys / "publication.json");
-                 WriteJson(path, previous);
-                 Reject(ErrorCode::rollback,
-                        [&] { RepositoryPublisher(fixture.repo, fixture.keys).Refresh(); });
-                 Check(ReadJson(fixture.keys / "publication.json") == protectedState,
-                       "Refused replay changed protected state");
-             }
-         });
-    Case("interrupted publication requires explicit exact restoration",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             auto oldCheckpoint = ReadJson(fixture.keys / "publication.json");
-             auto next =
-                 oldCheckpoint.at("envelopes").at("snapshot").at("signed").at("version").get<unsigned>() + 1;
-             auto obstruction = fixture.repo / "metadata" / (std::to_string(next) + ".snapshot.json");
-             fs::create_directory(obstruction);
-             Reject(ErrorCode::io, [&] { RepositoryPublisher(fixture.repo, fixture.keys).Refresh(); });
-             auto checkpoint = ReadJson(fixture.keys / "publication.json");
-             Check(checkpoint != oldCheckpoint, "Interrupted publication lost protected intent");
-             Reject(ErrorCode::rollback, [&] { RepositoryPublisher(fixture.repo, fixture.keys).Refresh(); });
-             fs::remove(obstruction);
-             RepositoryPublisher(fixture.repo, fixture.keys).RestoreMetadata();
-             for (const std::string role : {"targets", "snapshot", "timestamp"})
-                 Check(ReadJson(fixture.repo / "metadata" / (role + ".json")) ==
-                           checkpoint.at("envelopes").at(role),
-                       "Restore changed signed bytes");
-             RepositoryPublisher(fixture.repo, fixture.keys).Refresh();
-             Check(ReadJson(fixture.keys / "publication.json")
-                           .at("envelopes")
-                           .at("timestamp")
-                           .at("signed")
-                           .at("version") ==
-                       checkpoint.at("envelopes").at("timestamp").at("signed").at("version").get<unsigned>() +
-                           1,
-                   "Refresh did not advance restored state");
-         });
+TEST(TrustValidationTest, PublisherRefusesIndependentSnapshotAndTimestampReplays)
+{
+    for (const std::string role : {"snapshot", "timestamp"})
+    {
+        SCOPED_TRACE(role);
+        RepositoryFixture repository;
+
+        repository.PublishApplicationRelease();
+        auto path = repository.repo / "metadata" / (role + ".json");
+        auto previous = ReadJson(path);
+
+        repository.PublishApplicationRelease(2);
+        auto protectedState = ReadJson(repository.keys / "publication.json");
+
+        WriteJson(path, previous);
+
+        ASSERT_TRUE(FailsWithUpdateError(
+            ErrorCode::rollback, [&] { RepositoryPublisher(repository.repo, repository.keys).Refresh(); }));
+        ASSERT_EQ(protectedState, ReadJson(repository.keys / "publication.json"))
+            << "Refused replay changed protected state";
+    }
+}
+
+TEST_F(TrustTest, InterruptedPublicationRequiresExplicitExactRestoration)
+{
+    repository.PublishApplicationRelease();
+
+    auto oldCheckpoint = ReadJson(repository.keys / "publication.json");
+    auto next = oldCheckpoint.at("envelopes").at("snapshot").at("signed").at("version").get<unsigned>() + 1;
+    auto obstruction = repository.repo / "metadata" / (std::to_string(next) + ".snapshot.json");
+
+    fs::create_directory(obstruction);
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::io, [&]
+                                     { RepositoryPublisher(repository.repo, repository.keys).Refresh(); }));
+    auto checkpoint = ReadJson(repository.keys / "publication.json");
+
+    ASSERT_NE(oldCheckpoint, checkpoint) << "Interrupted publication lost protected intent";
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::rollback, [&]
+                                     { RepositoryPublisher(repository.repo, repository.keys).Refresh(); }));
+    fs::remove(obstruction);
+    RepositoryPublisher(repository.repo, repository.keys).RestoreMetadata();
+    for (const std::string role : {"targets", "snapshot", "timestamp"})
+        ASSERT_EQ(checkpoint.at("envelopes").at(role),
+                  ReadJson(repository.repo / "metadata" / (role + ".json")))
+            << "Restore changed signed bytes";
+    RepositoryPublisher(repository.repo, repository.keys).Refresh();
+
+    ASSERT_EQ(checkpoint.at("envelopes").at("timestamp").at("signed").at("version").get<unsigned>() + 1,
+              ReadJson(repository.keys / "publication.json")
+                  .at("envelopes")
+                  .at("timestamp")
+                  .at("signed")
+                  .at("version"))
+        << "Refresh did not advance restored state";
+}
+
 #ifdef _WIN32
-    Case("metadata directory cannot be replaced during a transaction",
-         []
-         {
-             Fixture fixture;
-             MetadataDirectory directory(fixture.repo);
-             std::error_code error;
-             fs::rename(fixture.repo / "metadata", fixture.repo / "detached-metadata", error);
-             Check(static_cast<bool>(error), "Directory replacement bypassed the transaction anchor");
-             directory.Write("anchor.json", {{"value", "synthetic"}});
-             Check(fs::exists(fixture.repo / "metadata/anchor.json"), "Anchored write failed");
-         });
-    Case("metadata handles reject Windows junction redirection",
-         []
-         {
-             Fixture fixture;
-             auto outside = fixture.root / "outside";
-             fs::create_directory(outside);
-             MetadataDirectory directory(fixture.repo);
-             for (const auto &entry : fs::directory_iterator(fixture.repo / "metadata"))
-                 fs::remove(entry.path());
-             auto target = L"\\??\\" + outside.wstring();
-             auto display = outside.wstring();
-             struct Junction
-             {
-                 DWORD tag;
-                 USHORT length, reserved, substituteOffset, substituteLength, printOffset, printLength;
-             };
-             auto pathBytes = (target.size() + display.size() + 2) * sizeof(wchar_t);
-             std::vector<BYTE> buffer(sizeof(Junction) + pathBytes);
-             auto junction = reinterpret_cast<Junction *>(buffer.data());
-             junction->tag = IO_REPARSE_TAG_MOUNT_POINT;
-             junction->length = static_cast<USHORT>(8 + pathBytes);
-             junction->substituteLength = static_cast<USHORT>(target.size() * sizeof(wchar_t));
-             junction->printOffset = static_cast<USHORT>((target.size() + 1) * sizeof(wchar_t));
-             junction->printLength = static_cast<USHORT>(display.size() * sizeof(wchar_t));
-             auto paths = reinterpret_cast<wchar_t *>(buffer.data() + sizeof(Junction));
-             std::copy(target.begin(), target.end(), paths);
-             std::copy(display.begin(), display.end(), paths + target.size() + 1);
-             auto handle = CreateFileW((fixture.repo / "metadata").c_str(), GENERIC_WRITE,
-                                       FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
-                                       FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
-             Check(handle != INVALID_HANDLE_VALUE, "Cannot create isolated junction fixture");
-             DWORD returned = 0;
-             auto created =
-                 DeviceIoControl(handle, FSCTL_SET_REPARSE_POINT, buffer.data(),
-                                 static_cast<DWORD>(buffer.size()), nullptr, 0, &returned, nullptr);
-             CloseHandle(handle);
-             Check(created != FALSE, "Cannot set isolated junction fixture");
-             try
-             {
-                 directory.Write("anchor.json", {{"value", "synthetic"}});
-             }
-             catch (const Error &error)
-             {
-                 Check(error.code == ErrorCode::io, "Unexpected junction rejection");
-             }
-             Check(!fs::exists(outside / "anchor.json"), "Metadata write followed a changed junction");
-         });
+TEST_F(TrustTest, MetadataDirectoryCannotBeReplacedDuringATransaction)
+{
+    MetadataDirectory directory(repository.repo);
+    std::error_code error;
+
+    fs::rename(repository.repo / "metadata", repository.repo / "detached-metadata", error);
+
+    ASSERT_TRUE(static_cast<bool>(error)) << "Directory replacement bypassed the transaction anchor";
+    directory.Write("anchor.json", {{"value", "synthetic"}});
+
+    ASSERT_TRUE(fs::exists(repository.repo / "metadata/anchor.json")) << "Anchored write failed";
+}
+
+TEST_F(TrustTest, MetadataHandlesRejectWindowsJunctionRedirection)
+{
+    auto outside = repository.root / "outside";
+    fs::create_directory(outside);
+    MetadataDirectory directory(repository.repo);
+    repository.ReplaceMetadataWithJunctionTo(outside);
+
+    try
+    {
+        directory.Write("anchor.json", {{"value", "synthetic"}});
+    }
+    catch (const Error &error)
+    {
+        ASSERT_EQ(ErrorCode::io, error.code) << "Unexpected junction rejection";
+    }
+
+    ASSERT_FALSE(fs::exists(outside / "anchor.json")) << "Metadata write followed a changed junction";
+}
+
 #else
-    Case("metadata writes remain anchored across directory replacement",
-         []
-         {
-             Fixture fixture;
-             auto outside = fixture.root / "outside";
-             fs::create_directory(outside);
-             MetadataDirectory directory(fixture.repo);
-             fs::rename(fixture.repo / "metadata", fixture.repo / "detached-metadata");
-             fs::create_directory_symlink(outside, fixture.repo / "metadata");
-             directory.Write("anchor.json", {{"value", "synthetic"}});
-             Check(!fs::exists(outside / "anchor.json"), "Write followed a replaced directory");
-             Check(fs::exists(fixture.repo / "detached-metadata/anchor.json"),
-                   "Write lost its original directory anchor");
-             Reject(ErrorCode::io, [&] { MetadataDirectory redirected(fixture.repo); });
-         });
+TEST_F(TrustTest, MetadataWritesRemainAnchoredAcrossDirectoryReplacement)
+{
+    auto outside = repository.root / "outside";
+    fs::create_directory(outside);
+    MetadataDirectory directory(repository.repo);
+    fs::rename(repository.repo / "metadata", repository.repo / "detached-metadata");
+    fs::create_directory_symlink(outside, repository.repo / "metadata");
+    directory.Write("anchor.json", {{"value", "synthetic"}});
+
+    ASSERT_FALSE(fs::exists(outside / "anchor.json")) << "Write followed a replaced directory";
+
+    ASSERT_TRUE(fs::exists(repository.repo / "detached-metadata/anchor.json"))
+        << "Write lost its original directory anchor";
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::io, [&] { MetadataDirectory redirected(repository.repo); }));
+}
+
 #endif
-    Case("calendar dates and path variants are validated",
-         []
-         {
-             Reject(ErrorCode::trust, [] { ParseUtc("2026-02-30T00:00:00Z"); });
-             for (const std::string path : {"../escape", "/absolute", "C:/drive", "a\\\\b", "a%2fb",
-                                            "CON.txt", "a//b", "a/../b", "a."})
-                 Reject(ErrorCode::invalidInput, [&] { SafeRelative(path); });
-         });
+TEST(TrustValidationTest, CalendarDatesAndPathVariantsAreValidated)
+{
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::trust, [] { ParseUtc("2026-02-30T00:00:00Z"); }));
+    for (const std::string path :
+         {"../escape", "/absolute", "C:/drive", "a\\\\b", "a%2fb", "CON.txt", "a//b", "a/../b", "a."})
+        ASSERT_TRUE(FailsWithUpdateError(ErrorCode::invalidInput, [&] { SafeRelative(path); }));
+}
+
+struct DelegationPatternCase
+{
+    const char *name;
+    const char *pattern;
+    const char *target;
+    bool matches;
+};
+
+class DelegationPatternTest : public RepositoryTest,
+                              public ::testing::WithParamInterface<DelegationPatternCase>
+{
+};
+
+TEST_P(DelegationPatternTest, AuthorizesOnlyMatchingTargets)
+{
+    const auto &scenario = GetParam();
+
+    repository.config.target = scenario.target;
+    repository.PublishApplicationRelease();
+    repository.AddDelegatedRole("pattern", scenario.pattern, false, true);
+    UpdateClient client(repository.config);
+
+    if (scenario.matches)
+    {
+        EXPECT_EQ("updateAvailable", client.CheckForUpdate(repository.cancel).at("status"));
+        EXPECT_EQ("updated", client.ApplyUpdate(repository.cancel).at("status"));
+    }
+    else
+        EXPECT_TRUE(
+            FailsWithUpdateError(ErrorCode::trust, [&] { client.CheckForUpdate(repository.cancel); }));
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    DelegatedPaths, DelegationPatternTest,
+    ::testing::Values(DelegationPatternCase{"WildcardSuffix", "example.*", "example.zip", true},
+                      DelegationPatternCase{"SingleCharacter", "ex?mple.zip", "example.zip", true},
+                      DelegationPatternCase{"InclusiveRange", "ex[a-z]mple.?ip", "example.zip", true},
+                      DelegationPatternCase{"NegatedRange", "ex[!0-9]mple.*", "example.zip", true},
+                      DelegationPatternCase{"ExcludedRange", "ex[0-9]mple.*", "example.zip", false},
+                      DelegationPatternCase{"StarBacktracking", "*ample.?ip", "example.zip", true},
+                      DelegationPatternCase{"UnicodePrefix", "channel/\xCE\xBB*", "channel/\xCE\xBB.zip",
+                                            true},
+                      DelegationPatternCase{"UnclosedBracketLiteral", "file[.zip", "file[.zip", true}),
+    [](const ::testing::TestParamInfo<DelegationPatternCase> &info) { return info.param.name; });
+
+TEST_F(TrustTest, ReadsUtf8FilesystemNamesWithoutDependingOnTheWindowsCodePage)
+{
+    const auto path = repository.root / fs::u8path("\xCE\xBB.txt");
+
+    WriteFixtureFile(path, "synthetic UTF-8 file");
+
+    EXPECT_EQ("synthetic UTF-8 file", ReadFile(path));
 }
 } // namespace test

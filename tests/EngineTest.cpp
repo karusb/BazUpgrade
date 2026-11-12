@@ -1,212 +1,358 @@
-#include "curl/RepositoryTransport.hpp"
-
 #include "tests/TestSupport.hpp"
+#include <functional>
 
 namespace test
 {
-void EngineTests()
+class RecordingInstaller final : public Installer
 {
-    Case("HTTP development transport remains loopback only",
-         []
-         {
-             CurlTransport secure("https://example.invalid/repository");
-             CurlTransport development("http://127.0.0.1:12345/repository", true);
-             CurlTransport ipv6("http://[::1]:12345/repository", true);
-             Reject(ErrorCode::invalidInput, [] { CurlTransport transport("http://127.0.0.1/"); });
-             Reject(ErrorCode::invalidInput,
-                    [] { CurlTransport transport("http://example.invalid/", true); });
-             Reject(ErrorCode::invalidInput, [] { CurlTransport transport("ftp://127.0.0.1/", true); });
-             Reject(ErrorCode::invalidInput,
-                    [] { CurlTransport transport("https://user:synthetic@example.invalid/"); });
-             for (const auto &url : {"https://@example.invalid/", "https://example.invalid/?",
-                                     "https://example.invalid/#", "http://localhost.example.invalid/",
-                                     "http://127.0.0.1.example.invalid/", "https://example.invalid:invalid/"})
-                 Reject(ErrorCode::invalidInput, [&] { CurlTransport transport(url, true); });
-         });
-    Case("pre-cancelled repository transfers create no download output",
-         []
-         {
-             Fixture fixture;
-             Cancellation cancel;
-             cancel.requested = true;
-             CurlTransport transport("https://example.invalid/api/");
-             auto destination = fixture.root / "cancelled-download.bin";
-             Reject(ErrorCode::cancelled, [&] { transport.Fetch("metadata/root.json", 1024, cancel); });
-             Reject(ErrorCode::cancelled,
-                    [&] { transport.Download("artifact.zip", destination, 1024, cancel); });
-             DirectoryTransport local(fixture.repo);
-             Reject(ErrorCode::cancelled, [&] { local.Download("artifact.zip", destination, 1024, cancel); });
-             Check(!fs::exists(destination), "A cancelled transfer created an output file");
-         });
-    Case("invalid repository paths are rejected before creating output",
-         []
-         {
-             Fixture fixture;
-             CurlTransport transport("https://example.invalid/api/");
-             auto destination = fixture.root / "invalid-download.bin";
-             Reject(ErrorCode::invalidInput,
-                    [&] { transport.Fetch("../metadata.json", 1024, fixture.cancel); });
-             Reject(ErrorCode::invalidInput,
-                    [&] { transport.Download("../artifact.zip", destination, 1024, fixture.cancel); });
-             Check(!fs::exists(destination), "An invalid path created an output file");
-         });
-    Case("portable update activates an immutable version",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             auto result = UpdateClient(fixture.config).ApplyUpdate(fixture.cancel);
-             Check(result.at("status") == "updated", "Update failed");
-             auto state = UpdateClient(fixture.config).ReadInstallationState();
-             Check(ReadFile(fs::u8path(state.at("activePath").get<std::string>())) == "synthetic version one",
-                   "Wrong active file");
-             Check(UpdateClient(fixture.config).ApplyUpdate(fixture.cancel).at("status") == "upToDate",
-                   "Completed update replayed");
-         });
-    Case("release selection uses sequence rather than lexical version",
-         []
-         {
-             Fixture fixture;
-             auto descriptor = fixture.Custom(1);
-             descriptor["appVersion"] = "1.9.0";
-             RepositoryPublisher(fixture.repo, fixture.keys)
-                 .Publish(fixture.package, fixture.config.target, descriptor);
-             UpdateClient(fixture.config).ApplyUpdate(fixture.cancel);
-             Bytes(fixture.root / "application/app.txt", "synthetic version two");
-             fs::remove(fixture.package);
-             PackDirectory(fixture.root / "application", fixture.package);
-             descriptor = fixture.Custom(2);
-             descriptor["appVersion"] = "1.10.0";
-             RepositoryPublisher(fixture.repo, fixture.keys)
-                 .Publish(fixture.package, fixture.config.target, descriptor);
-             Check(UpdateClient(fixture.config).CheckForUpdate(fixture.cancel).at("version") == "1.10.0",
-                   "Double-digit version was skipped");
-         });
-    Case("a selected target cannot cross application scope",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             fixture.config.appId = "another-app";
-             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).ApplyUpdate(fixture.cancel); });
-         });
-    Case("state cannot be reused with another channel",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             UpdateClient(fixture.config).CheckForUpdate(fixture.cancel);
-             fixture.config.channel = "beta";
-             Reject(ErrorCode::trust, [&] { UpdateClient(fixture.config).ReadInstallationState(); });
-         });
-    Case("operation lock does not block unrelated applications",
-         []
-         {
-             Fixture first, second;
-             first.Publish();
-             second.Publish();
-             FileLock active(first.config.stateDirectory / "operation.lock");
-             Reject(ErrorCode::busy, [&] { UpdateClient(first.config).CheckForUpdate(first.cancel); });
-             Check(UpdateClient(second.config).CheckForUpdate(second.cancel).at("status") ==
-                       "updateAvailable",
-                   "Unrelated operation was blocked");
-         });
-    Case("pre-cancelled update leaves no installer pending",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             fixture.cancel.requested = true;
-             Reject(ErrorCode::cancelled, [&] { UpdateClient(fixture.config).ApplyUpdate(fixture.cancel); });
-             Check(UpdateClient(fixture.config).ReadInstallationState().at("phase") == "idle",
-                   "Cancelled check changed installation phase");
-         });
-    Case("unknown operation is never automatically replayed",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             UpdateClient client(fixture.config);
-             auto state = client.ReadInstallationState();
-             state["phase"] = "applying";
-             state["pending"] = {
-                 {"sequence", 1}, {"version", "1.1.0"}, {"sha256", fixture.crypto.HashFile(fixture.package)}};
-             WriteJson(fixture.config.stateDirectory / "installation.json", state);
-             Reject(ErrorCode::unknownOutcome, [&] { client.ApplyUpdate(fixture.cancel); });
-             Check(client.ReconcileInstallationOutcome(false).at("phase") == "idle",
-                   "Explicit reconciliation failed");
-         });
-    Case("archive traversal is rejected",
-         []
-         {
-             Fixture fixture;
-             fs::remove(fixture.package);
-             MaliciousZip(fixture.package, "../outside.txt");
-             fixture.Publish();
-             Reject(ErrorCode::invalidInput,
-                    [&] { UpdateClient(fixture.config).ApplyUpdate(fixture.cancel); });
-             Check(!fs::exists(fixture.config.installDirectory / "outside.txt"),
-                   "Archive escaped its version directory");
-         });
-    Case("archive symlinks are rejected",
-         []
-         {
-             Fixture fixture;
-             fs::remove(fixture.package);
-             MaliciousZip(fixture.package, "app.txt", true);
-             fixture.Publish();
-             Reject(ErrorCode::invalidInput,
-                    [&] { UpdateClient(fixture.config).ApplyUpdate(fixture.cancel); });
-         });
-    Case("extraction quota is enforced independently of compressed size",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             fixture.config.maxExtractedBytes = 1;
-             Reject(ErrorCode::invalidInput,
-                    [&] { UpdateClient(fixture.config).ApplyUpdate(fixture.cancel); });
-         });
-    Case("download quota is enforced before fetching an artifact",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             fixture.config.maxDownloadBytes = 1;
-             Reject(ErrorCode::invalidInput,
-                    [&] { UpdateClient(fixture.config).ApplyUpdate(fixture.cancel); });
-         });
-    Case("an external updater can verify a downloaded artifact",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             Check(UpdateClient(fixture.config)
-                           .VerifyDownloadedFile(fixture.package, fixture.cancel)
-                           .at("status") == "verified",
-                   "Verification integration failed");
-             Bytes(fixture.root / "wrong.zip", "wrong");
-             Reject(ErrorCode::trust,
-                    [&] {
-                        UpdateClient(fixture.config)
-                            .VerifyDownloadedFile(fixture.root / "wrong.zip", fixture.cancel);
-                    });
-         });
-    Case("publisher rejects sequence reuse",
-         []
-         {
-             Fixture fixture;
-             fixture.Publish();
-             Reject(ErrorCode::rollback, [&] { fixture.Publish(); });
-         });
-    Case("capabilities distinguish native installation and verification",
-         []
-         {
-             auto result = Capabilities();
-             Check(result.at("automaticElevation") == false && result.at("firmware") == false,
-                   "Unsupported capabilities advertised");
-             Check(result.at("verificationOnly").at(0) == "electron",
-                   "Verification adapter is not discoverable");
-         });
+  public:
+    explicit RecordingInstaller(std::function<InstallResult()> install) : install(std::move(install))
+    {
+    }
+
+    InstallResult Apply(const Target &, const fs::path &, const fs::path &, const Cancellation &) override
+    {
+        ++calls;
+
+        return install();
+    }
+
+    unsigned calls = 0;
+
+  private:
+    std::function<InstallResult()> install;
+};
+
+class EngineTest : public RepositoryTest
+{
+  protected:
+    UpdateClient CreateClientWithInstaller(std::unique_ptr<Installer> installer)
+    {
+        return UpdateClient(repository.config, std::make_unique<OpenSslCrypto>(),
+                            std::make_unique<DirectoryTransport>(repository.repo), std::move(installer));
+    }
+};
+
+TEST(EngineValidationTest, HttpDevelopmentTransportRemainsLoopbackOnly)
+{
+    CurlTransport secure("https://example.invalid/repository");
+    CurlTransport development("http://127.0.0.1:12345/repository", true);
+    CurlTransport ipv6("http://[::1]:12345/repository", true);
+
+    for (const auto &url :
+         {"http://127.0.0.1/", "http://example.invalid/", "https://user:synthetic@example.invalid/"})
+    {
+        SCOPED_TRACE(url);
+        ASSERT_TRUE(FailsWithUpdateError(ErrorCode::invalidInput, [&] { CurlTransport transport(url); }));
+    }
+
+    for (const auto &url :
+         {"http://example.invalid/", "ftp://127.0.0.1/", "https://user:synthetic@example.invalid/",
+          "https://@example.invalid/", "https://example.invalid/?", "https://example.invalid/#",
+          "http://localhost.example.invalid/", "http://127.0.0.1.example.invalid/",
+          "https://example.invalid:invalid/"})
+    {
+        SCOPED_TRACE(url);
+        ASSERT_TRUE(
+            FailsWithUpdateError(ErrorCode::invalidInput, [&] { CurlTransport transport(url, true); }));
+    }
+}
+
+TEST_F(EngineTest, PreCancelledRepositoryTransfersCreateNoDownloadOutput)
+{
+    Cancellation cancel;
+    CurlTransport remote("https://example.invalid/api/");
+    DirectoryTransport local(repository.repo);
+    const auto destination = repository.root / "cancelled-download.bin";
+
+    cancel.requested = true;
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::cancelled,
+                                     [&] { remote.Fetch("metadata/root.json", 1024, cancel); }));
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::cancelled,
+                                     [&] { remote.Download("artifact.zip", destination, 1024, cancel); }));
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::cancelled,
+                                     [&] { local.Download("artifact.zip", destination, 1024, cancel); }));
+
+    EXPECT_FALSE(fs::exists(destination));
+}
+
+TEST_F(EngineTest, InvalidRepositoryPathsAreRejectedBeforeCreatingOutput)
+{
+    CurlTransport transport("https://example.invalid/api/");
+    const auto destination = repository.root / "invalid-download.bin";
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::invalidInput,
+                                     [&] { transport.Fetch("../metadata.json", 1024, repository.cancel); }));
+    ASSERT_TRUE(FailsWithUpdateError(
+        ErrorCode::invalidInput,
+        [&] { transport.Download("../artifact.zip", destination, 1024, repository.cancel); }));
+
+    EXPECT_FALSE(fs::exists(destination));
+}
+
+TEST_F(EngineTest, PortableUpdateActivatesAnImmutableVersion)
+{
+    repository.PublishApplicationRelease();
+    UpdateClient client(repository.config);
+
+    const auto result = client.ApplyUpdate(repository.cancel);
+    const auto state = client.ReadInstallationState();
+    const auto activePath = fs::u8path(state.at("activePath").get<std::string>());
+
+    EXPECT_EQ("updated", result.at("status"));
+    EXPECT_EQ("synthetic version one", ReadFile(activePath));
+    EXPECT_EQ("upToDate", client.ApplyUpdate(repository.cancel).at("status"));
+}
+
+TEST_F(EngineTest, ReleaseSelectionUsesSequenceRatherThanLexicalVersion)
+{
+    auto descriptor = repository.BuildReleaseDescriptor(1);
+    RepositoryPublisher publisher(repository.repo, repository.keys);
+
+    descriptor["appVersion"] = "1.9.0";
+    publisher.Publish(repository.package, repository.config.target, descriptor);
+    UpdateClient(repository.config).ApplyUpdate(repository.cancel);
+
+    repository.WriteApplicationArchive("synthetic version two");
+    descriptor = repository.BuildReleaseDescriptor(2);
+    descriptor["appVersion"] = "1.10.0";
+    publisher.Publish(repository.package, repository.config.target, descriptor);
+
+    const auto available = UpdateClient(repository.config).CheckForUpdate(repository.cancel);
+
+    EXPECT_EQ("1.10.0", available.at("version"));
+}
+
+TEST_F(EngineTest, ASelectedTargetCannotCrossApplicationScope)
+{
+    repository.PublishApplicationRelease();
+    repository.config.appId = "another-app";
+    UpdateClient client(repository.config);
+
+    EXPECT_TRUE(FailsWithUpdateError(ErrorCode::trust, [&] { client.ApplyUpdate(repository.cancel); }));
+}
+
+TEST_F(EngineTest, StateCannotBeReusedWithAnotherChannel)
+{
+    repository.PublishApplicationRelease();
+    UpdateClient(repository.config).CheckForUpdate(repository.cancel);
+
+    repository.config.channel = "beta";
+    UpdateClient anotherChannel(repository.config);
+
+    EXPECT_TRUE(FailsWithUpdateError(ErrorCode::trust, [&] { anotherChannel.ReadInstallationState(); }));
+}
+
+TEST(EngineValidationTest, OperationLockDoesNotBlockUnrelatedApplications)
+{
+    RepositoryFixture first;
+    RepositoryFixture second;
+
+    first.PublishApplicationRelease();
+    second.PublishApplicationRelease();
+
+    FileLock active(first.config.stateDirectory / "operation.lock");
+    UpdateClient blocked(first.config);
+    UpdateClient independent(second.config);
+
+    EXPECT_TRUE(FailsWithUpdateError(ErrorCode::busy, [&] { blocked.CheckForUpdate(first.cancel); }));
+    EXPECT_EQ("updateAvailable", independent.CheckForUpdate(second.cancel).at("status"));
+}
+
+TEST_F(EngineTest, PreCancelledUpdateLeavesNoInstallerPending)
+{
+    repository.PublishApplicationRelease();
+    repository.cancel.requested = true;
+    UpdateClient client(repository.config);
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::cancelled, [&] { client.ApplyUpdate(repository.cancel); }));
+
+    EXPECT_EQ("idle", client.ReadInstallationState().at("phase"));
+}
+
+TEST_F(EngineTest, UnknownOperationIsNeverAutomaticallyReplayed)
+{
+    repository.PublishApplicationRelease();
+    UpdateClient client(repository.config);
+    auto state = client.ReadInstallationState();
+
+    state["phase"] = "applying";
+    state["pending"] = {
+        {"sequence", 1}, {"version", "1.1.0"}, {"sha256", repository.crypto.HashFile(repository.package)}};
+    WriteJson(repository.config.stateDirectory / "installation.json", state);
+
+    ASSERT_TRUE(
+        FailsWithUpdateError(ErrorCode::unknownOutcome, [&] { client.ApplyUpdate(repository.cancel); }));
+
+    EXPECT_EQ("idle", client.ReconcileInstallationOutcome(false).at("phase"));
+}
+
+TEST_F(EngineTest, ArchiveTraversalIsRejected)
+{
+    repository.CreateUnsafeArchive("../outside.txt");
+    repository.PublishApplicationRelease();
+    UpdateClient client(repository.config);
+
+    ASSERT_TRUE(
+        FailsWithUpdateError(ErrorCode::invalidInput, [&] { client.ApplyUpdate(repository.cancel); }));
+
+    EXPECT_FALSE(fs::exists(repository.config.installDirectory / "outside.txt"));
+}
+
+TEST_F(EngineTest, ArchiveSymlinksAreRejected)
+{
+    repository.CreateUnsafeArchive("app.txt", true);
+    repository.PublishApplicationRelease();
+    UpdateClient client(repository.config);
+
+    EXPECT_TRUE(
+        FailsWithUpdateError(ErrorCode::invalidInput, [&] { client.ApplyUpdate(repository.cancel); }));
+}
+
+TEST_F(EngineTest, ExtractionQuotaIsEnforcedIndependentlyOfCompressedSize)
+{
+    repository.PublishApplicationRelease();
+    repository.config.maxExtractedBytes = 1;
+    UpdateClient client(repository.config);
+
+    EXPECT_TRUE(
+        FailsWithUpdateError(ErrorCode::invalidInput, [&] { client.ApplyUpdate(repository.cancel); }));
+}
+
+TEST_F(EngineTest, DownloadQuotaIsEnforcedBeforeFetchingAnArtifact)
+{
+    repository.PublishApplicationRelease();
+    repository.config.maxDownloadBytes = 1;
+    UpdateClient client(repository.config);
+
+    EXPECT_TRUE(
+        FailsWithUpdateError(ErrorCode::invalidInput, [&] { client.ApplyUpdate(repository.cancel); }));
+}
+
+TEST_F(EngineTest, AnExternalUpdaterCanVerifyADownloadedArtifact)
+{
+    repository.PublishApplicationRelease();
+    UpdateClient client(repository.config);
+
+    const auto result = client.VerifyDownloadedFile(repository.package, repository.cancel);
+
+    EXPECT_EQ("verified", result.at("status"));
+
+    const auto wrongArtifact = repository.root / "wrong.zip";
+    WriteFixtureFile(wrongArtifact, "wrong");
+
+    EXPECT_TRUE(FailsWithUpdateError(ErrorCode::trust,
+                                     [&] { client.VerifyDownloadedFile(wrongArtifact, repository.cancel); }));
+}
+
+TEST_F(EngineTest, PublisherRejectsSequenceReuse)
+{
+    repository.PublishApplicationRelease();
+
+    EXPECT_TRUE(FailsWithUpdateError(ErrorCode::rollback, [&] { repository.PublishApplicationRelease(); }));
+}
+
+TEST(EngineValidationTest, CapabilitiesDistinguishNativeInstallationAndVerification)
+{
+    const auto result = Capabilities();
+
+    EXPECT_FALSE(result.at("automaticElevation").get<bool>());
+    EXPECT_FALSE(result.at("firmware").get<bool>());
+    EXPECT_EQ("electron", result.at("verificationOnly").at(0));
+}
+
+TEST_F(EngineTest, CancellationAfterReadinessPreservesTheReadyPhase)
+{
+    repository.PublishApplicationRelease();
+    auto installer = std::make_unique<RecordingInstaller>([] { return InstallResult{}; });
+    auto &recording = *installer;
+    auto client = CreateClientWithInstaller(std::move(installer));
+
+    auto onReady = [&]
+    {
+        EXPECT_EQ("ready", ReadJson(repository.config.stateDirectory / "installation.json").at("phase"));
+        repository.cancel.requested = true;
+    };
+
+    ASSERT_TRUE(FailsWithUpdateError(ErrorCode::cancelled,
+                                     [&] { client.ApplyUpdate(repository.cancel, 0, onReady); }));
+
+    EXPECT_EQ(0u, recording.calls);
+    EXPECT_EQ("ready", client.ReadInstallationState().at("phase"));
+
+    repository.cancel.requested = false;
+    EXPECT_TRUE(
+        FailsWithUpdateError(ErrorCode::unknownOutcome, [&] { client.ApplyUpdate(repository.cancel); }));
+    EXPECT_EQ(0u, recording.calls);
+}
+
+TEST_F(EngineTest, FailedInstallerPreservesItsPhaseAndIsNotReplayed)
+{
+    repository.PublishApplicationRelease();
+    auto installer = std::make_unique<RecordingInstaller>(
+        []() -> InstallResult { throw Error(ErrorCode::unknownOutcome, "Synthetic installer outcome"); });
+    auto &recording = *installer;
+    auto client = CreateClientWithInstaller(std::move(installer));
+
+    ASSERT_TRUE(
+        FailsWithUpdateError(ErrorCode::unknownOutcome, [&] { client.ApplyUpdate(repository.cancel); }));
+
+    EXPECT_EQ(1u, recording.calls);
+    EXPECT_EQ("applying", client.ReadInstallationState().at("phase"));
+    EXPECT_TRUE(
+        FailsWithUpdateError(ErrorCode::unknownOutcome, [&] { client.ApplyUpdate(repository.cancel); }));
+    EXPECT_EQ(1u, recording.calls);
+}
+
+TEST_F(EngineTest, RebootCompletionRequiresExplicitConfirmation)
+{
+    repository.PublishApplicationRelease();
+    auto installer = std::make_unique<RecordingInstaller>([] { return InstallResult{true, {}}; });
+    auto &recording = *installer;
+    auto client = CreateClientWithInstaller(std::move(installer));
+
+    const auto result = client.ApplyUpdate(repository.cancel);
+
+    EXPECT_EQ("pendingReboot", result.at("status"));
+    EXPECT_TRUE(
+        FailsWithUpdateError(ErrorCode::invalidInput, [&] { client.ReconcileInstallationOutcome(false); }));
+    EXPECT_EQ("complete", client.ReconcileInstallationOutcome(true).at("phase"));
+    EXPECT_EQ("upToDate", client.ApplyUpdate(repository.cancel).at("status"));
+    EXPECT_EQ(1u, recording.calls);
+}
+
+TEST_F(EngineTest, EntryQuotaRejectsAnIncompleteVersionBeforeActivation)
+{
+    WriteFixtureFile(repository.root / "application/extra.txt", "another file");
+    repository.WriteApplicationArchive("synthetic version one");
+    repository.PublishApplicationRelease();
+    auto client = CreateClientWithInstaller(
+        std::make_unique<PortableInstaller>(repository.config.maxExtractedBytes, 1));
+
+    ASSERT_TRUE(
+        FailsWithUpdateError(ErrorCode::invalidInput, [&] { client.ApplyUpdate(repository.cancel); }));
+
+    const auto state = client.ReadInstallationState();
+    const auto hash = repository.crypto.HashFile(repository.package);
+
+    EXPECT_EQ("applying", state.at("phase"));
+    EXPECT_FALSE(state.contains("activePath"));
+    EXPECT_FALSE(
+        fs::exists(repository.config.installDirectory / "versions" / hash / ".bazupgrade-version.json"));
+}
+
+TEST_F(EngineTest, ExtractionAcceptsExactByteAndEntryQuotas)
+{
+    const std::string contents = "synthetic version one";
+
+    repository.PublishApplicationRelease();
+    auto client = CreateClientWithInstaller(std::make_unique<PortableInstaller>(contents.size(), 1));
+
+    const auto result = client.ApplyUpdate(repository.cancel);
+    const auto state = client.ReadInstallationState();
+
+    EXPECT_EQ("updated", result.at("status"));
+    EXPECT_EQ(contents, ReadFile(fs::u8path(state.at("activePath").get<std::string>())));
 }
 } // namespace test

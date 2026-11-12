@@ -8,6 +8,7 @@
 | nlohmann/json 3.12.0 | JSON model | Installed package or SHA-256 pinned public archive |
 | CurlWrapper 2 | Reusable HTTP client, bounded transfers, streams and cancellation | Installed private CMake SDK only |
 | BazPO 0.3 | Every C++ executable's options | Installed package or immutable public commit |
+| GoogleTest 1.18 | Native behavior tests and fixtures | Test builds only; public archive pinned by commit and SHA-256 |
 | Python / official python-tuf | CLI/C ABI/HTTP and interoperability tests | requirements-tests.txt |
 | Node 20+ | Optional Node/Electron SDK | No runtime npm dependencies |
 | Windows SDK signtool | Optional native Authenticode signing and verification | Explicit absolute operator-selected executable |
