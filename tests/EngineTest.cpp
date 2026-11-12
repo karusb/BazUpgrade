@@ -33,6 +33,8 @@ void EngineTests()
              Reject(ErrorCode::cancelled, [&] { transport.Fetch("metadata/root.json", 1024, cancel); });
              Reject(ErrorCode::cancelled,
                     [&] { transport.Download("artifact.zip", destination, 1024, cancel); });
+             DirectoryTransport local(fixture.repo);
+             Reject(ErrorCode::cancelled, [&] { local.Download("artifact.zip", destination, 1024, cancel); });
              Check(!fs::exists(destination), "A cancelled transfer created an output file");
          });
     Case("invalid repository paths are rejected before creating output",
